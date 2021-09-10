@@ -1,0 +1,2335 @@
+AT&T 汇编学习 
+套用网上看到的一句话开头吧（这也是我有过的一个过程，基本一样吧）：今天开始学习linux内核编程了，从没有内核编程基础开始学起。所以很多相关的知识都要了解。首先就是AT&T汇编语言。因为在linux内核源代码中，好像除了开始的bootsect.s和head.s是用intel的汇编外，别的汇编代码都是用的AT&T汇编语言，所以有必要把AT&T汇编语言了解一下。
+自己补充一点：我开始没想过什么linux内核编程哦，只觉得能把内核代码开懂就是最大的心愿了，不过现在还好，可以开始深入内核编写一些简单程序（主要是驱动吧，而且是针对的是嵌入式linux哈）！
+
+1.学习AT&T汇编语言的理由
+只有一点就是看懂linux启动代码。当然以后可能也会用到。
+
+2.学习的难度
+以为本人intel的汇编学的还算过得去，所以在这基础之上应该不是太难，最多发半天时间久可以熟悉了吧，对比intel汇编学习。
+
+3.和intel的差异
+ 
+ 以下的内容都是AT&T汇编的特点：
+（1）、寄存器前面要加“%”，如  mov %eax,%ebx
+   这里要注意的一点是，AT&T汇编中，源寄存器和目的寄存器的顺序和intel汇编刚好相反，AT&T汇编中，左边的是源寄存器，右边的是目的寄存器，在上边那个例子中，%eax是源寄存器，%ebx是目的寄存器。
+ 
+（2）、立即数/常数前面要加$，如  mov $4,%ebx 把4这个数装入ebx这个寄存器。
+   符号常数直接用， 如  mov  value,%eax 即把value代表的那个值装入eax寄存器。
+                     mov $value,%eax 即把value的值作为地址，而把对应那个地址中的值装入eax。
+ 
+（3）、b(byte):8位， w（word）：16位， l（long）：32位
+   如：  movb %ax,%bx     movw %eax,%ebx
+ 
+（4）、jum/call的操作数前要加上“*"作为前缀， 远跳转ljmp，远调用lcall
+   如  ljmp $section,$offset
+       lcall $section,$offset
+   这里$section和offset表示的就是，以section为段地址，offset为段内偏移地址。因此，ljmp $section,$offset即跳转到section:offset地址。
+ 
+（5）、远返回lret
+   如  lret $stack_adjust
+ 
+（6）、寻址方式
+   表示方式 section:disp(base,index,scale)
+   计算方法 base+index*scale+disp
+        即 section:[base+index*scale+disp]
+   其中disp是表示偏移地址。
+   如  movl -4(%ebp),%eax  把[%ebp-4]的内容装入eax
+ 
+（7）、C语言中嵌入汇编
+   格式: _asm_("asm statements":outputs:inputs:registers-modified)
+   其中，"asm statements"是汇编语句表达式，outputs,inputs,register-modified都是可选参数，以冒号隔开，且一次以0～9编号，如outputs的寄存器是0号，inputs寄存器是1号，往后依次类推。outputs是汇编语句执行完后输出到的寄存器，inputs是输入到某个寄存器。
+   例1：_asm_("pushl %%eax/n/t" "movl $0,%%eax/n/t" "popl %%eax");
+   在嵌入汇编中，寄存器前面要加两个%，因为gcc在编译是，会先去掉一个%再输出成汇编格式。
+   例2：{ register char _res;/
+         asm("push %%fs/n/t"
+         "movw %%ax,%%fs/n/t"
+         "movb %%fs:%2,%%al/n/t"
+         "pop %%fs"
+         :"=a"(_res):"0"(seg),"m"(*(addr)));/
+         _res;}
+    movb %%fs:%2,%%al/n/t一句中是把以fs为段地址，以后面的第二号寄存器即后面的seg中的值为偏移地址所对应的值装入al。"=a"(_res):"0"(seg),"m"(*(addr)))一句中，"=a"(_res)表示把a寄存器中的内容给_res，"0"(seg)表示把seg中的内容给0所对应的寄存器，而0即表示使用和前一个寄存器相同的寄存器，这里即使用a寄存器，也就是说把seg中的内容个a寄存器。
+   需要解释以下的是，a,b,c,d分别表示寄存器eax，ebx，ecx，edx
+                  S，D分别表示寄存器esi，edi
+                  r表示任意寄存器
+                  0（数字0，不是o！）表示使用上一个寄存器
+
+4.下面是找到别人翻译的文档：
+一　基本语法  
+    语法上主要有以下几个不同.  
+★ 寄存器命名原则  
+AT&T: %eax Intel: eax  
+★ 源/目的操作数顺序  
+AT&T: movl %eax,%ebx Intel: mov ebx,eax  
+★ 常数/立即数的格式  
+AT&T: movl $_value,%ebx Intel: mov eax,_value  
+把_value的地址放入eax寄存器  
+AT&T: movl $0xd00d,%ebx Intel: mov ebx,0xd00d  
+★ 操作数长度标识  
+AT&T: movw %ax,%bx Intel: mov bx,ax  
+★寻址方式  
+AT&T: immed32(basepointer,indexpointer,indexscale)  
+Intel: [basepointer + indexpointer*indexscale + imm32)  
+
+Linux工作于保护模式下，用的是３２位线性地址，所以在计算地址时  
+不用考虑segment:offset的问题．上式中的地址应为：  
+imm32 + basepointer + indexpointer*indexscale  
+下面是一些例子：  
+★直接寻址  
+AT&T: _booga　; _booga是一个全局的C变量  
+注意加上$是表示地址引用，不加是表示值引用．  
+注：对于局部变量，可以通过堆栈指针引用．  
+Intel: [_booga]  
+★寄存器间接寻址  
+AT&T: (%eax)  
+Intel: [eax]  
+★变址寻址  
+AT&T: _variable(%eax)  
+Intel: [eax + _variable]  
+AT&T: _array(,%eax,4)  
+Intel: [eax*4 + _array]  
+AT&T: _array(%ebx,%eax,8)  
+Intel: [ebx + eax*8 + _array]  
+
+二　基本的行内汇编  
+
+    基本的行内汇编很简单，一般是按照下面的格式  
+asm("statements");  
+例如：asm("nop"); asm("cli");  
+asm　和　__asm__是完全一样的．  
+如果有多行汇编，则每一行都要加上　"/n/t"  
+例如：  
+asm( "pushl %eax/n/t"  
+"movl $0,%eax/n/t"  
+"popl %eax");  
+实际上gcc在处理汇编时，是要把asm(...)的内容"打印"到汇编  
+文件中，所以格式控制字符是必要的．  
+再例如：  
+asm("movl %eax,%ebx");  
+asm("xorl %ebx,%edx");  
+asm("movl $0,_booga);  
+在上面的例子中，由于我们在行内汇编中改变了edx和ebx的值，但是由于gcc的特殊的处理方法，即先形成汇编文件，再交给GAS去汇编，所以GAS并不知道我们已经改变了edx和ebx的值，如果程序的上下文需要edx或ebx作暂存，这样就会引起严重的后果．对于变量_booga也存在一样的问题．为了解决这个问题，就要用到扩展的行内汇编语法．  
+三　扩展的行内汇编  
+    扩展的行内汇编类似于Watcom.  
+基本的格式是：  
+asm ( "statements" : output_regs : input_regs : clobbered_regs);  
+clobbered_regs指的是被改变的寄存器．  
+下面是一个例子(为方便起见，我使用全局变量）：  
+int count=1;  
+int value=1;  
+int buf[10];  
+void main()  
+{  
+asm(  
+"cld /n/t"  
+"rep /n/t"  
+"stosl"  
+:  
+:  "c" (count), "a" (value) , "D" (buf[0])  
+:  "%ecx","%edi" );  
+}  
+得到的主要汇编代码为：  
+movl count,%ecx  
+movl value,%eax  
+movl buf,%edi  
+#APP  
+cld  
+rep  
+stosl  
+#NO_APP  
+cld,rep,stos就不用多解释了．  
+这几条语句的功能是向buf中写上count个value值．  
+冒号后的语句指明输入，输出和被改变的寄存器．  
+通过冒号以后的语句，编译器就知道你的指令需要和改变哪些寄存器，  
+从而可以优化寄存器的分配．  
+其中符号"c"(count)指示要把count的值放入ecx寄存器  
+类似的还有：  
+a eax  
+b ebx  
+c ecx  
+d edx  
+S esi  
+D edi  
+I 常数值，(0 - 31)  
+q,r 动态分配的寄存器  
+g eax,ebx,ecx,edx或内存变量  
+A 把eax和edx合成一个64位的寄存器(use long longs)  
+我们也可以让gcc自己选择合适的寄存器．  
+如下面的例子：  
+asm("leal (%1,%1,4),%0"  
+:  "=r" (x)   if ($ != jQuery) { $ = jQuery.noConflict(); } var isLogined = false; var cb_blogId = 101983; var cb_entryId = 2252032; var cb_blogApp = "brucewoo"; var cb_blogUserGuid = "ddc0afc3-b1d1-df11-ac81-842b2b196315"; var cb_entryCreatedDate = '2010/7/27 0:50:00';
+
+
+
+
+
+
+
+
+
+
+**************************************************************************************
+at&t汇编说明
+发布时间：2008-04-07 11:55:52  来源：Blog.ChinaUnix.net  作者：Blog.ChinaUnix.net  点击：447at&t汇编说明 rainfall兄作品
+itle: at&t汇编语法简单说明 这些是从网上的一些资料整理而得，不知道说清楚了没有，或是有什么错误，请指正。 1：寄存器引用引用寄存器要在寄存器号前加%,如 mov % eax, % ebx 2: 操作数顺序操作数排列是从源（左）到目的（右），如 mov % eax(源）, % ebx(目的） 3: 常数/立即数的格式 使用立即数，要在数前面加 $, 如 mov , % ebx
+符号常数直接引用 如 mov value , % ebx (value是一常数，已在前面定义）
+引用符号地址在符号前加 $, 如 mov $value, % ebx (是将value的地址放到ebx中）
+
+4：操作数的长度
+操作数的长度用加在指令后的符号表示
+b(byte), w(word), l(long) 如 movw %ax,%bx 
+
+5：寻址方式 
+内存寻址可以用
+section:disp(base, index, scale) 表示，计算方法是 
+base + index*scale + disp, section在实模式下有用，保护模式下用线性地址，不用section。
+例如：
+call *SYMBOL_NAME(sys_call_table)(,% eax,4)
+这是entry.S中的一句，对应应该是
+% eax*4 + sys_call_table, 在sys_call_table中找到相应系统调用的地址。
+
+
+二　基本的行内汇编 
+
+基本的行内汇编很简单，一般是按照下面的格式 
+asm("statements"); 
+例如：asm("nop"); asm("cli"); 
+asm　和　__asm__是完全一样的． 
+如果有多行汇编，则每一行都要加上　"＼n＼t" 
+例如： 
+asm( "pushl % eax＼n＼t" 
+"movl ,% eax＼n＼t" 
+"popl % eax"); 
+实际上gcc在处理汇编时，是要把asm(...)的内容"打印"到汇编 
+文件中，所以格式控制字符是必要的． 
+
+再例如： 
+asm("movl % eax,% ebx"); 
+asm("xorl % ebx,% edx"); 
+asm("movl ,_booga); 
+
+在上面的例子中，由于我们在行内汇编中改变了edx和ebx的值，但是 
+由于gcc的特殊的处理方法，即先形成汇编文件，再交给GAS去汇编， 
+所以GAS并不知道我们已经改变了edx和ebx的值，如果程序的上下文 
+需要edx或ebx作暂存，这样就会引起严重的后果．对于变量_booga也 
+存在一样的问题．为了解决这个问题，就要用到扩展的行内汇编语法． 
+
+三　扩展的行内汇编 
+基本的格式是： 
+asm( statements : outputs : inputs : registers-modified); 
+statements是一些汇编语句，outputs是输出寄存器，inputs是输入寄存器，registers-modified
+是在这个过程中改变的寄存器。
+例如：
+
+int i=0, j=1, k=0;
+__asm__ __volatile__("
+pushl %% eax＼n
+movl %1, %% eax＼n
+addl %2, %% eax＼n
+movl %% eax, %0＼n
+: "=g" (k)
+: "g" (i), "g" (j)
+); // k = i + j
+
+在上面的这段代码中，输入寄存器用了"g"限定符，它的意思是将输入变量放入
+eax,ebx,ecx,edx或内存变量其中之一，类似的限定还有：
+"a" eax 
+"b" ebx 
+"c" ecx 
+"d" edx 
+"S" esi 
+"D" edi 
+"q" 从eax,ebx,ecx,edx分配寄存器
+"r" 从eax,ebx,ecx,edx,esi,edi分配寄存器
+"g" eax,ebx,ecx,edx或内存变量 
+"A" 把eax和edx合成一个64位的寄存器(use long longs) 
+"I" I是常数值，例如"1",它是把输出寄存器和输入寄存器由左到右，由上到下顺序往下数对应的寄存器
+在上面这段代码中,%0对应k存放的寄存器,,%1对应i存放的寄存器，%2对应j存放的寄存器.
+"i" 立即数
+"m" 内存变量
+输出寄存器要在前面加"=",指示输出的位置。
+上面的代码展开大概是：
+mov i, % eax
+mov j, % ebx
+pushl %% eax
+movl % eax, %% eax
+movl % ebx, %% eax
+movl %% eax, % ecx
+popl %% eax
+
+又如：
+do { ＼
+int __d0, __d1; ＼
+__asm__ __volatile__ ("movw %%dx,%%ax＼n＼t" ＼
+"movw %4,%%dx＼n＼t" ＼
+"movl %% eax,%0＼n＼t" ＼
+"movl %% edx,%1" ＼
+:"=m" (*((long *) (gate_addr))), ＼
+"=m" (*(1+(long *) (gate_addr))), "=&a" (__d0), "=&d" (__d1) ＼
+:"i" ((short) (0x8000+(dpl<<13)+(type<<8))), ＼
+"3" ((char *) (addr)),"2" (__KERNEL_CS << 16)); ＼
+} while (0)中 
+%3 对应edx, %2对应eax, %1是(*(1+(long *) (gate_addr))). 这段代码是将中断处理函数的地址填到
+ldt(中断向量表)中。
+
+
+转几篇关于linux下AT&T汇编的帖子  分类： 专业相关 2007-06-13 12:32 1、寄存器前面要加“%”，如 mov %eax,%ebx
+这里要注意的一点是，AT&T汇编中，源寄存器和目的寄存器的顺序和intel汇编刚好相反，AT&T汇编中，左边的是源寄存器，右边的是目的寄存
+
+器，在上边那个例>子中，%eax是源寄存器，%ebx是目的寄存器。
+
+2、立即数/常数前面要加$，如 mov $4,%ebx 把4这个数装入ebx这个寄存器。
+符号常数直接用， 如 mov value,%eax 即把value代表的那个值装入eax寄存器。
+mov $value,%eax 即把value的值作为地址，而把对应那个地址中的值装入eax。
+
+3、b(byte):8位， w（word）：16位， l（long）：32位
+如： movb %ax,%bx movw %eax,%ebx
+
+4、jum/call的操作数前要加上“*"作为前缀， 远跳转ljmp，远调用lcall
+如 ljmp $section,$offset
+lcall $section,$offset
+这里$section和offset表示的就是，以section为段地址，offset为段内偏移地址。因此，ljmp $section,$offset即跳转到section: offset地
+
+址。
+
+5、远返回lret
+如 lret $stack_adjust
+
+6、寻址方式
+表示方式 section:disp(base,index,scale)
+计算方法 base+index*scale+disp
+即 section:[base+index*scale+disp]
+其中disp是表示偏移地址。
+如 movl -4(%ebp),%eax 把[%ebp-4]的内容装入eax
+------------------------------------------------------------------------------
+用gcc -S和objdump -D得到的汇编代码都是AT&T汇编（估计是GNU开发这些工具的时候选择的是AT&T汇编，与Linux本身应该没有关系，因为
+
+Linux源代码中都是Intel汇编），它与Intel汇编有一些差别，不过影响不大，概括一下：
+
+
+前缀 
+在Intel汇编中没有寄存器前缀或者立即数前缀。而在AT&T汇编中寄存器有一个“%”前缀，立即数有一个“$”前缀。如，
+
+movl    $1,%eax 
+
+movl    $0xff,%ebx 
+
+int     $0x80 
+
+操作数的用法 
+intel语句中操作数的用法和AT&T中的用法相反。在AT&T语句中第一个操作数表示源而第二个操作数表示目的，从上面的例子可以看出。个人觉
+
+得这样比较自然。（忘了原来学过的Arm汇编是不是这样的了。） 
+
+存储器操作数 
+如同上面所看到的，存储器操作数的用法也不相同。在Intel语句中基址寄存器用“[”和“]”括起来而在AT&T语句中是用“（”和“）”括起
+
+来的。 例如， 
+
+Intex Syntax 
+
+mov    eax,[ebx] 
+
+mov    eax,[ebx+3] 
+
+AT&T Syntax 
+
+movl    (%ebx),%eax 
+
+movl    3(%ebx),%eax 
+
+AT&T语法中用来处理复杂的操作的指令的形式和Intel语法中的形式比较起来要简洁，不过可读性差点。在Intel语句中这样的形式是segreg:
+
+[base+index*scale+disp]。在AT&T语句中这样的形式是%segreg:disp(base,index,scale)。 在AT&T语句中用作scale/disp的立即数不要加“$
+
+”前缀。 
+
+后缀 
+AT&T语法中有一个后缀，它的意义是表示操作数的大小。“l”代表long，“w”代表word，“b”代表byte。对于程序员来说似乎有些多余，可
+
+能是movb/movw/movl等对应的机器代码不一样，开发汇编器的人就搞了不同的汇编指令出来？ 
+
+movb    %bl,%al 
+
+movw    %bx,%ax 
+
+movl    %ebx,%eax 
+
+movl    (%ebx),%eax 
+------------------------------------------------------------------------
+AT&T汇编语言与GCC内嵌汇编简介
+查看 
+修订 
+周二, 09/19/2006 - 11:23 — lostleaf 
+AT&T汇编语言与GCC内嵌汇编简介
+
+版本 0.1
+时间04/3/30
+EMAIL chforest_chang@hotmail.com
+
+1 AT&T 与INTEL的汇编语言语法的区别
+1.1大小写
+1.2操作数赋值方向
+1.3前缀
+1.4间接寻址语法
+1.5后缀
+1.6指令
+
+2 GCC内嵌汇编
+2.1简介
+2.2内嵌汇编举例
+2.3语法
+2.3.1汇编语句模板
+2.3.2输出部分
+2.3.3输入部分
+2.3.4限制字符
+2.3.5破坏描述部分
+2.4GCC如何编译内嵌汇编代码
+
+3后记
+
+本节先介绍
+AT&T汇编语言语法与INTEL汇编语法的差别，然后介绍GCC内嵌汇编语法。阅读本节需要读者具有INTEL汇编语言基础。
+
+1 AT&T 与INTEL的汇编语言语法的区别
+
+1.1
+指令大小写
+INTEL格式的指令使用大写字母，而AT&T
+格式的使用小写字母。
+例：
+INTEL AT&T
+MOV EAX,EBX movl %ebx,%eax
+1.2
+指令操作数赋值方向
+
+在INTEL语法中，第一个表示目的操作数，第二个表示源操作数，赋值方向从右向左。
+AT&T语法第一个为源操作数，第二个为目的操作数，方向从左到右，合乎自然。
+
+例：
+INTEL AT&T
+MOV EAX,EBX movl %ebx,%eax
+1.3
+指令前缀
+在INTEL语法中寄存器和立即数不需要前缀；
+AT&T中寄存器需要加前缀"%"；立即数需要加前缀"$"。
+
+例：
+INTEL AT&T
+MOV EAX,1 movl $1,%eax
+
+符号常数直接引用，不需要加前缀，如：
+movl value , %ebx
+value为一常数；
+在符号前加前缀 $, 表示引用符号地址,
+如
+movl $value, %ebx
+是将value的地址放到ebx中。
+
+总线锁定前缀"lock"：
+总线锁定操作。"lock"前缀在Linux
+核心代码中使用很多，特别是SMP
+代码中。当总线锁定后其它CPU
+不能存取锁定地址处的内存单元。
+
+远程跳转指令和子过程调用指令的操作码使用前缀"l"，分别为ljmp，lcall，
+与之相应的返回指令伪lret。
+例：
+
+INTEL AT&T
+
+lcall $secion:$offset
+JMP FAR SECTION:OFFSET ljmp $secion:$offset
+RET FAR SATCK_ADJUST lret $stack_adjust
+
+1.4 间接寻址语法
+
+INTEL中基地址使用"["、"]"，而在AT&T"("、")"；
+另外处理复杂操作数的语法也不同，
+INTEL为Segreg:[base+index*scale+disp]
+，而在AT&T中为%segreg:disp(base,index,sale)，其中segreg
+，index,scale，disp都是可选的，在指定index而没有显式指定Scale
+的情况下使用默认值1。Scale,disp不需要加前缀"&"。
+
+INTEL AT&T
+Instr foo,segreg:[base+index*scale+disp] instr %segreg:disp(base,index,scale),foo
+
+1.5
+指令后缀
+
+AT&T
+语法中大部分指令操作码的最后一个字母表示操作数大小，"b"表示byte
+（一个字节）；"w"表示word（2，个字节）；"l"表示long（4，个字节）。
+INTEL中处理内存操作数时也有类似的语法如：
+BYTE PTR、WORD PTR、DWORD PTR。
+
+例：
+INTEL AT&T
+mov al, bl movb %bl,%al
+mov ax,bx movw %bx,%ax
+mov eax, dword ptr [ebx] movl (%ebx), %eax
+
+AT&T汇编指令中，操作数扩展指令有两个后缀，一个指定源操作数的字长，另一个指定目标操作数的字长。AT&T的符号扩展指令的为"movs"，
+
+零扩展指令为"movz
+"（相应的Intel指令为"movsx"和"movzx"）。因此，"movsbl %al,%edx"表示对寄存器al
+中的字节数据进行字节到长字的符号扩展，计算结果存放在寄存器edx
+中。下面是一些允许的操作数扩展后缀： 
+
+l
+bl: ，字节>->长字 l
+bw: ，字节>->字 l
+wl: ，字->长字 
+
+跳转指令标号后的后缀表示跳转方向，"f"表示向前（forward），
+"b，"表示向后（back）。
+例：
+
+jmp 1f
+jmp 1f
+
+1.6 指令
+INTEL汇编与AT&T汇编指令基本相同，差别仅在语法上。关于每条指令的语法可以参考I386Manual。
+
+2 GCC内嵌汇编
+
+2.1 简介
+
+内核代码绝大部分使用C
+语言编写，只有一小部分使用汇编语言编写，例如与特定体系结构相关的代码和对性能影响很大的代码。GCC提供了内嵌汇编的功能，可以在C
+
+代码中直接内嵌汇编语言语句，大大方便了程序设计。
+
+简单的内嵌汇编很容易理解
+
+例：
+
+__asm__
+__volatile__("hlt");
+
+"__asm__"表示后面的代码为内嵌汇编，"asm"是"__asm__"的别名。
+"__volatile__"表示编译器不要优化代码，后面的指令保留原样，
+"volatile"是它的别名。括号里面是汇编指令。
+
+2.2 内嵌汇编举例在内嵌汇编中，可以将C
+语言表达式指定为汇编指令的操作数，而且不用去管如何将C
+语言表达式的值读入哪个寄存器，以及如何将计算结果写回C
+变量，你只要告诉程序中C语言表达式与汇编指令操作数之间的对应关系即可， GCC
+会自动插入代码完成必要的操作。
+
+使用内嵌汇编，要先编写汇编指令模板，然后将C语言表达式与指令的操作数相关联，并告诉
+GCC对这些操作有哪些限制条件。例如在下面的汇编语句：
+
+__asm__ __violate__
+("movl %1,%0" : "=r" (result) : "m" (input));
+
+"movl %1,%0"是指令模板；"%0"和"%1"代表指令的操作数，称为占位符，内嵌汇编靠它们将C
+语言表达式与指令操作数相对应。指令模板后面用小括号括起来的是C
+语言表达式，本例中只有两个："result"和"input"，他们按照出现的顺序分别与指令操作
+数"%0"，"%1，"对应；注意对应顺序：第一个C表达式对应"%0"；第二个表达式对应"%1
+"，依次类推，操作数至多有10个，分别用"%0"，"%1"…."%9，"表示。在每个操作数前
+面有一个用引号括起来的字符串，字符串的内容是对该操作数的限制或者说要求。"result"前面
+的限制字符串是"=r"，其中"="表示"result"是输出操作数，"r
+"表示需要将"result"与某个通用寄存器相关联，先将操作数的值读入寄存器，然后
+在指令中使用相应寄存器，而不是"result"本身，当然指令执行完后需要将寄存器中的值
+存入变量"result"，从表面上看好像是指令直接对"result"进行操作，实际上GCC
+做了隐式处理，这样我们可以少写一些指令。"input"前面的"r"表示该表达式需要先放入
+某个寄存器，然后在指令中使用该寄存器参加运算。
+
+我们将上面的内嵌代码放到一个C源文件中，然后使用gcc ?c?S得到该C
+文件源代码相对应的汇编代码，然后查看一下汇编代码，看看GCC是如何处理的。
+
+C源文件如下内容如下，注意该代码没有实际意义，仅仅作为例子。
+
+extern int
+input,result;
+
+void test(void)
+{
+input
+= 1;
+__asm__ __volatile__ ("movl %1,%0" :
+"=r" (result) : "r" (input));
+return
+;
+}
+
+对应的汇编代码如下;
+
+行号 代码 解释
+
+1
+7
+8 movl $1, input 对应C语言语句input = 1;
+9 input, %eax
+10 #APP GCC插入的注释，表示内嵌汇编开始
+11 movl %eax,%eax 我们的内嵌汇编语句
+12 #NO_APP GCC 插入的注释，表示内嵌汇编结束
+13 movl %eax, result 将结果存入result变量
+14
+－
+18
+。。。。。。
+
+从汇编代码可以看出，第9行和第13行是GCC，自动增加的代码，GCC
+根据限定字符串决定如何处理C表达式，本例两个表达式都被指定为"r"型，所以先使用指令：
+movl input, %eax
+
+将input读入寄存器%eax；GCC，也指定一个寄存器与输出变量result
+相关，本例也是%eax，等得到操作结果后再使用指令：
+
+movl %eax, result
+
+将寄存器的值写回C变量result中。从上面的汇编代码我们可以看出与result
+和input，相关连的寄存器都是%eax，GCC使用%eax，替换内嵌汇编指令模板中的
+%0，%1 
+
+movl %eax,%eax
+显然这一句可以不要。但是没有优化，所以这一句没有被去掉。
+
+由此可见，C表达式或者变量与寄存器的关系由GCC自动处理，我们只需使用限制字符串指导GCC
+如何处理即可。限制字符必须与指令对操作数的要求相匹配，否则产生的汇编代码
+将会有错，读者可以将上例中的两个"r"，都改为"m"(m，表示操作数放在内存，而不是寄
+存器中)，编译后得到的结果是：
+
+movl input, result
+
+很明显这是一条非法指令，因此限制字符串必须与指令对操作数的要求匹配。例如指令movl
+允许寄存器到寄存器，立即数到寄存器等，但是不允许内存到内存的操作，因此两个操作数
+不能同时使用"m"作为限定字符。
+
+2.3 语法
+
+内嵌汇编语法如下：
+
+__asm__(
+汇编语句模板:
+输出部分:
+输入部分:
+破坏描述部分)
+
+共四个部分：汇编语句模板，输出部分，输入部分，破坏描述部分，各部分使用":"格
+开，汇编语句模板必不可少，其他三部分可选，如果使用了后面的部分，而前面部分为空，
+也需要用":"格开，相应部分内容为空。例如：
+
+__asm__ __volatile__(
+"cli":
+:
+:"memory")
+
+2.3.1 汇编语句模板
+
+汇编语句模板由汇编语句序列组成，语句之间使用";"、"\n"或"\n\t"分开。
+指令中的操作数可以使用占位符引用C语言变量，操作数占位符最多10个，名称如下：%0，%1…，%9。
+指令中使用占位符表示的操作数，总被视为long型（4，个字节），但对其施加的操作
+根据指令可以是字或者字节，当把操作数当作字或者字节使用时，默认为低字或者低字节。
+对字节操作可以显式的指明是低字节还是次字节。方法是在%和序号之间插入一个字母，
+"b"代表低字节，"h"代表高字节，例如：%h1。
+
+2.3.2 输出部分
+
+输出部分描述输出操作数，不同的操作数描述符之间用逗号格开，每个操作数描述符由限定字符串和
+C语言变量组成。每个输出操作数的限定字符串必须包含"="表示他是一个输出操作数。
+
+例：
+__asm__ __volatile__("pushfl ; popl %0 ; cli":"=g" (x) )
+
+描述符字符串表示对该变量的限制条件，这样GCC就可以根据这些条件决定如何
+分配寄存器，如何产生必要的代码处理指令操作数与C表达式或C变量之间的联系。
+
+2.3.3 输入部分
+
+输入部分描述输入操作数，不同的操作数描述符之间使用逗号格开，每个操作数描述符由
+限定字符串和C语言表达式或者C语言变量组成。
+
+例1：
+__asm__ __volatile__ ("lidt %0" : : "m" (real_mode_idt));
+
+例二（bitops.h）：
+
+Static __inline__ void __set_bit(int nr,
+volatile void * addr)
+{
+__asm__(
+"btsl%1,%0" :
+"=m"(ADDR) :
+"Ir"(nr));
+}
+
+后例功能是将(*addr)的第nr位设为1。第一个占位符%0与C，语言变量ADDR
+对应，第二个占位符%1与C，语言变量nr对应。因此上面的汇编语句代码与下面的伪代码等价：
+btsl nr, ADDR，该指令的两个操作数不能全是内存变量，因此将nr的限定字符串指定为"Ir"，
+将nr，与立即数或者寄存器相关联，这样两个操作数中只有ADDR为内存变量。
+
+2.3.4 限制字符
+2.3.4.1 限制字符列表
+限制字符有很多种，有些是与特定体系结构相关，此处仅列出常用的限定字符和i386
+中可能用到的一些常用的限定符。它们的作用是指示编译器如何处理其后的C
+语言变量与指令操作数之间的关系，例如是将变量放在寄存器中还是放在内存中等，
+下表列出了常用的限定字母。
+
+分类
+限定符 描述 通用寄存器
+
+"a"将输入变量放入eax
+
+这里有一个问题：假设eax已经被使用，那怎么办？
+
+其实很简单：因为GCC知道eax已经被使用，它在这段汇编代码的起始处插入一条
+语句pushl %eax，将eax内容保存到堆栈，然后在这段代码结束处再增加一条
+语句popl %eax，恢复eax的内容
+
+"b"将输入变量放入ebx
+"c"将输入变量放入ecx
+"d"将输入变量放入edx
+"s"将输入变量放入esi
+"d"将输入变量放入edi
+"q"将输入变量放入eax，ebx ,ecx ，edx中的一个
+"r"将输入变量放入通用寄存器，也就是eax ，ebx，ecx,edx，esi，edi中的一个
+"A"把eax和edx，合成一个64位的寄存器(uselong longs)
+"m"内存变量
+"o"操作数为内存变量，但是其寻址方式是偏移量类型，也即是基址寻址，或者是基址加变址寻址
+"V"操作数为内存变量，但寻址方式不是偏移量类型
+"," 操作数为内存变量，但寻址方式为自动增量
+"p"操作数是一个合法的内存地址（指针）
+
+寄存器或内存
+
+"g" 将输入变量放入eax，ebx，ecx ，edx中的一个或者作为内存变量
+"X"操作数可以是任何类型
+
+立即数
+"I" 0-31 之间的立即数（用于32位移位指令）
+"J" 0-63 之间的立即数（用于64 位移位指令）
+"N" 0-255 ，之间的立即数（用于out 指令）
+"i" 立即数
+"n" 立即数，有些系统不支持除字以外的立即数，这些系统应该使用"n"而不是"i"
+
+匹配
+
+"0"，"1 ，"... "9 "
+
+表示用它限制的操作数与某个指定的操作数匹配，也即该操作数就是指定的那个操作数，
+例如用"0 "去描述"％1"操作数，那么"%1"引用的其实就是"%0"操作数，注意作为
+限定符字母的0－9 ，与指令中的"％0"－"％9"的区别，前者描述操作数，后者代表操作数。
+
+后面有详细描述 & 该输出操作数不能使用过和输入操作数相同的寄存器
+
+后面有详细描述
+
+操作数类型
+"=" 操作数在指令中是只写的（输出操作数）
+"+" 操作数在指令中是读写类型的（输入输出操作数）
+
+浮点数
+"f"
+
+浮点寄存器
+"t"第一个浮点寄存器
+"u"第二个浮点寄存器
+"G"标准的80387
+
+浮点常数
+% 该操作数可以和下一个操作数交换位置
+
+例如addl的两个操作数可以交换顺序（当然两个操作数都不能是立即数）
+
+# 部分注释，从该字符到其后的逗号之间所有字母被忽略
+
+* 表示如果选用寄存器，则其后的字母被忽略
+
+现在继续看上面的例子，
+"=m" (ADDR)表示ADDR为内存变量（"m"），而且是输出变量（"="）；"Ir" (nr)表示nr，为
+0－31之间的立即数（"I"）或者一个寄存器操作数（"r"）。
+
+2.3.4.2
+匹配限制符
+
+I386
+指令集中许多指令的操作数是读写型的（读写型操作数指先读取原来的值然后参加运算，最后
+将结果写回操作数），例如addl %1,%0，它的作用是将操作数%0与操作数%1的和存入操作数%0，
+因此操作数%0是读写型操作数。老版本的GCC对这种类型操作数的支持不是很好，它将操作数严格
+分为输入和输出两种，分别放在输入部分和输出部分，而没有一个单独部分描述读写型操作数，
+因此在GCC中读写型的操作数需要在输入和输出部分分别描述，靠匹配限制符将两者关联到一起
+注意仅在输入和输出部分使用相同的C变量，但是不用匹配限制符，产生的代码很可能不对，后
+面会分析原因。
+
+匹配限制符是一位数字："0"、"1"……"9，"，分别表示它限制的C表达式分别与
+占位符%0，%1，……%9对应的C变量匹配。例如使用"0"作为%1，的限制字符，那么
+%0和％1表示同一个C，变量。
+
+看一下下面的代码就知道为什么要将读写型操作数，分别在输入和输出部分加以描述。
+
+该例功能是求input+result的和，然后存入result：
+
+extern int input,result;
+
+void test_at_t()
+{
+result= 0;
+input = 1;
+__asm__
+__volatile__ ("addl %1,%0":"=r"(result): "r"(input));
+
+}
+
+对应的汇编代码为：
+
+movl $0,_result
+movl $1,_input
+movl _input,%edx /APP
+addl %edx,%eax /NO_APP
+movl %eax,%edx
+movl %edx,_result
+
+input 为输入型变量，而且需要放在寄存器中，GCC给它分配的寄存器是%edx，在执行addl之前%edx，
+的内容已经是input的值。可见对于使用"r"限制的输入型变量或者表达式，在使用之前GCC会插入
+必要的代码将他们的值读到寄存器；"m"型变量则不需要这一步。读入input后执行addl，显然%eax
+的值不对，需要先读入result的值才行。再往后看：movl %eax,%edx和movl %edx,_result
+的作用是将结果存回result，分配给result的寄存器与分配给input的一样，都是%edx。
+
+综上可以总结出如下几点：
+
+1. 使用"r"限制的输入变量，GCC先分配一个寄存器，然后将值读入寄存器，最后
+用该寄存器替换占位符；
+
+2. 使用"r"限制的输出变量，GCC会分配一个寄存器，然后用该寄存器替换占位符，
+但是在使用该寄存器之前并不将变量值先读入寄存器，GCC认为所有输出变量以前的
+值都没有用处，不读入寄存器（可能是因为AT&T汇编源于CISC架构处理器的汇编语言
+，在CISC处理器中大部分指令的输入输出明显分开，而不像RISC那样一个操作数既
+做输入又做输出，例如add r0,r1,r2，r0，和r1是输入，r2是输出，输入和输出分开，
+没有使用输入输出型操作数，这样我们就可以认为r2对应的操作数原来的值没有用处，
+也就没有必要先将操作数的值读入r2，因为这是浪费处理器的CPU周期），最后GCC插入代码，
+将寄存器的值写回变量；
+
+3. 输入变量使用的寄存器在最后一处使用它的指令之后，就可以挪做其他用处，因为
+已经不再使用。例如上例中的%edx。在执行完addl之后就作为与result对应的寄存器。
+
+因为第二条，上面的内嵌汇编指令不能奏效，因此需要在执行addl之前把result的值读入
+寄存器，也许再将result放入输入部分就可以了（因为第一条会保证将result
+先读入寄存器）。修改后的指令如下（为了更容易说明问题将input限制符由"r，"改为"m"）：
+
+extern int input,result;
+
+void test_at_t()
+{
+
+result = 0;
+input = 1;
+__asm__
+__volatile__ ("addl %2,%0":"=r"(result):"r"(result),"m"(input));
+
+}
+
+看上去上面的代码可以正常工作，因为我们知道%0和%1都和result相关，应该使用同一个
+寄存器，但是GCC并不去判断%0和%1，是否和同一个C表达式或变量相关联（这样易于产生与
+内嵌汇编相应的汇编代码），因此%0和%1使用的寄存器可能不同。我们看一下汇编代码就知道了。
+
+movl $0,_result
+movl $1,_input
+movl _result,%edx /APP
+addl _input,%eax /NO_APP
+movl %eax,%edx
+movl %edx,_result
+
+现在在执行addl之前将result的值被读入了寄存器%edx，但是addl指令的操作数%0
+却成了%eax，而不是%edx，与预料的不同，这是因为GCC给输出和输入部分的变量分配了不同
+的寄存器，GCC没有去判断两者是否都与result相关，后面会讲GCC如何翻译内嵌汇编，看完之后
+就不会惊奇啦。
+
+使用匹配限制符后，GCC知道应将对应的操作数放在同一个位置（同一个寄存器或者同一个
+内存变量）。使用匹配限制字符的代码如下：
+
+extern int input,result;
+
+void test_at_t()
+{
+result = 0;
+input = 1;
+__asm__
+__volatile__ ("addl %2,%0":"=r"(result):"0"(result),"m"(input));
+
+}
+
+输入部分中的result用匹配限制符"0"限制，表示%1与％0，代表同一个变量，
+输入部分说明该变量的输入功能，输出部分说明该变量的输出功能，两者结合表示result
+是读写型。因为%0和%1，表示同一个C变量，所以放在相同的位置，无论是寄存器还是内存。
+
+相应的汇编代码为：
+
+movl $0,_result
+movl $1,_input
+movl _result,%edx
+movl %edx,%eax /APP
+addl _input,%eax /NO_APP
+movl %eax,%edx
+movl %edx,_result
+
+可以看到与result相关的寄存器是%edx，在执行指令addl之前先从%edx将result读入%eax，
+执行之后需要将结果从%eax读入%edx，最后存入result中。这里我们可以看出GCC
+处理内嵌汇编中输出操作数的一点点信息：addl并没有使用%edx，可见它不是简单的用result
+对应的寄存器%edx去替换%0，而是先分配一个寄存器，执行运算，最后才将运算结果存入
+对应的变量，因此GCC是先看该占位符对应的变量的限制符，发现是一个输出型寄存器变量，
+就为它分配一个寄存器，此时没有去管对应的C变量，最后GCC，知道还要将寄存器的值写回变量，
+与此同时，它发现该变量与%edx关联，因此先存入%edx，再存入变量。
+
+至此读者应该明白了匹配限制符的意义和用法。在新版本的GCC中增加了一个限制字符"+"，
+它表示操作数是读写型的，GCC知道应将变量值先读入寄存器，然后计算，最后写回变量，而
+无需在输入部分再去描述该变量。
+
+例;
+extern int input,result;
+
+void test_at_t()
+{
+
+result = 0;
+input = 1;
+__asm__
+__volatile__ ("addl %1,%0":"+r"(result):"m"(input));
+
+}
+
+此处用"+"替换了"="，而且去掉了输入部分关于result的描述，产生的汇编代码如下：
+movl $0,_result
+movl $1,_input
+movl _result,%eax /APP
+addl _input,%eax /NO_APP
+movl %eax,_result
+L2:
+movl %ebp,%esp
+
+处理的比使用匹配限制符的情况还要好，省去了好几条汇编代码。
+
+2.3.4.3 "&"限制符
+
+限制符"&"在内核中使用的比较多，它表示输入和输出操作数不能使用相同的寄存器，
+这样可以避免很多错误。
+
+举一个例子，下面代码的作用是将函数foo的返回值存入变量ret中：
+
+__asm__ ( "call foo;movl %%edx,%1", :"=a"(ret) : "r"(bar) );
+
+我们知道函数的int型返回值存放在%eax中，但是gcc编译的结果是输入和输出同时使用了
+寄存器%eax，如下：
+
+movl bar, %eax
+#APP
+call foo
+movl %ebx,%eax
+
+#NO_APP
+movl %eax, ret
+
+结果显然不对，原因是GCC并不知道%eax中的值是我们所要的。避免这种情况的方法是使用"&"
+限定符，这样bar就不会再使用%eax寄存器，因为已被ret指定使用。
+
+_asm__ ( "call foo;movl %%edx,%1",:"=&a"(ret) : "r"(bar) );
+
+2.3.5 破坏描述部分
+
+2.3.5.1 寄存器破坏描述符
+
+通常编写程序只使用一种语言：高级语言或者汇编语言。高级语言编译的步骤大致如下：
+l
+预处理；
+l
+编译
+l
+汇编
+l
+链接
+
+我们这里只关心第二步编译（将C代码转换成汇编代码）：因为所有的代码都是用高级语言编写，
+编译器可以识别各种语句的作用，在转换的过程中所有的寄存器都由编译器决定如何分配使用，
+它有能力保证寄存器的使用不会冲突；也可以利用寄存器作为变量的缓冲区，因为寄存器的访问
+速度比内存快很多倍。如果全部使用汇编语言则由程序员去控制寄存器的使用，只能靠程序员去
+保证寄存器使用的正确性。但是如果两种语言混用情况就变复杂了，因为内嵌的汇编代码可以直接
+使用寄存器，而编译器在转换的时候并不去检查内嵌的汇编代码使用了哪些寄存器（因为很难检测
+汇编指令使用了哪些寄存器，例如有些指令隐式修改寄存器，有时内嵌的汇编代码会调用其他子过程，
+而子过程也会修改寄存器），因此需要一种机制通知编译器我们使用了哪些寄存器（程序员自己知道
+内嵌汇编代码中使用了哪些寄存器），否则对这些寄存器的使用就有可能导致错误，修改描述部分
+可以起到这种作用。当然内嵌汇编的输入输出部分指明的寄存器或者指定为"r"，"g"型由编译器
+去分配的寄存器就不需要在破坏描述部分去描述，因为编译器已经知道了。
+
+破坏描述符由逗号格开的字符串组成，每个字符串描述一种情况，一般是寄存器名；除寄存器外
+还有"memory"。例如："%eax"，"%ebx"，"memory"等。
+
+下面看个例子就很清楚为什么需要通知GCC内嵌汇编代码中隐式（称它为隐式是因为GCC并不知道）
+使用的寄存器。
+
+在内嵌的汇编指令中可能会直接引用某些寄存器，我们已经知道AT&T格式的汇编语言中，寄存器
+名以"%"作为前缀，为了在生成的汇编程序中保留这个"%"号，在asm语句中对寄存器的
+引用必须用"%%"作为寄存器名称的前缀。原因是"%"在asm，内嵌汇编语句中的作用与"\"在C
+语言中的作用相同，因此"%%"转换后代表"%"。
+
+例（没有使用修改描述符）：
+
+int main(void)
+{
+int input, output,temp;
+input = 1;
+
+__asm__ __volatile__ ("movl $0, %%eax;\n\t
+movl %%eax, %1;\n\t
+movl %2, %%eax;\n\t
+movl %%eax, %0;\n\t"
+:"=m"(output),"=m"(temp) /* output */
+:"r"(input) /* input */
+);
+return 0;
+}
+
+这段代码使用%eax作为临时寄存器，功能相当于C代码："temp = 0;output=input"，
+对应的汇编代码如下：
+
+movl $1,-4(%ebp)
+movl -4(%ebp),%eax /APP
+movl $0, %eax;
+movl %eax, -12(%ebp);
+movl %eax, %eax;
+movl %eax, -8(%ebp); /NO_APP
+
+显然GCC给input分配的寄存器也是%eax，发生了冲突，output的值始终为0，而不是input。
+
+使用破坏描述后的代码：
+
+int main(void)
+{
+int input, output,temp;
+
+input = 1;
+
+__asm__ __volatile__
+( "movl $0, %%eax;\n\t
+movl %%eax, %1;\n\t
+movl %2, %%eax;\n\t
+movl %%eax, %0;\n\t"
+:"=m"(output),"=m"(temp) /* output */
+:"r"(input) /* input */
+:"eax"); /* 描述符 */
+
+return 0;
+}
+
+对应的汇编代码：
+
+movl $1,-4(%ebp)
+movl -4(%ebp),%edx /APP
+movl $0, %eax;
+movl %eax, -12(%ebp);
+movl %edx, %eax;
+movl %eax, -8(%ebp); /NO_APP
+
+通过破坏描述部分，GCC得知%eax已被使用，因此给input分配了%edx。在使用内嵌汇编时请记
+住一点：尽量告诉GCC尽可能多的信息，以防出错。
+
+如果你使用的指令会改变CPU的条件寄存器cc，需要在修改描述部分增加"cc"。
+
+2.3.5.2 memory破坏描述符
+
+"memory"比较特殊，可能是内嵌汇编中最难懂部分。为解释清楚它，先介绍一下编译器的
+优化知识，再看C关键字volatile。最后去看该描述符。
+
+2.3.5.2.1 编译器优化介绍
+
+内存访问速度远不及CPU处理速度，为提高机器整体性能，在硬件上引入硬件高速缓存Cache，
+加速对内存的访问。另外在现代CPU中指令的执行并不一定严格按照顺序执行，没有相关性
+的指令可以乱序执行，以充分利用CPU的指令流水线，提高执行速度。以上是硬件级别的优化。
+再看软件一级的优化：一种是在编写代码时由程序员优化，另一种是由编译器进行优化。编译器
+优化常用的方法有：将内存变量缓存到寄存器；调整指令顺序充分利用CPU指令流水线，常见的
+是重新排序读写指令。
+
+对常规内存进行优化的时候，这些优化是透明的，而且效率很好。由编译器优化或者硬件重新排序引起的问题的解决办法是在从硬件（或者其
+
+他处理器）的角度看必须以特定顺序执行的操作之间设置内存屏障（memory barrier），linux提供了一个宏解决编译器的执行顺序问题。
+
+void Barrier(void)
+
+这个函数通知编译器插入一个内存屏障，但对硬件无效，编译后的代码会把当前CPU
+寄存器中的所有修改过的数值存入内存，需要这些数据的时候再重新从内存中读出。
+
+2.3.5.2.2 C 语言关键字volatile
+
+C 语言关键字volatile（注意它是用来修饰变量而不是上面介绍的__volatile__）表明某个变量
+的值可能在外部被改变，因此对这些变量的存取不能缓存到寄存器，每次使用时需要重新存取。
+该关键字在多线程环境下经常使用，因为在编写多线程的程序时，同一个变量可能被多个线程修
+改，而程序通过该变量同步各个线程，例如：
+
+DWORD __stdcall threadFunc(LPVOID signal)
+{
+
+int* intSignal=reinterpret_cast(signal);
+
+*intSignal=2;
+
+while(*intSignal!=1)
+sleep(1000);
+
+return 0;
+
+}
+
+该线程启动时将intSignal置为2，然后循环等待直到intSignal为1，时退出。显然intSignal
+的值必须在外部被改变，否则该线程不会退出。但是实际运行的时候该线程却不会退出，即使
+在外部将它的值改为1，看一下对应的伪汇编代码就明白了：
+
+mov ax,signal
+label:
+if(ax!=1)
+goto label
+
+对于C编译器来说，它并不知道这个值会被其他线程修改。自然就把它cache在寄存器里面。记住，C
+编译器是没有线程概念的！这时候就需要用到volatile。volatile的本意是指：这个值可能会在
+当前线程外部被改变。也就是说，我们要在threadFunc中的intSignal前面加上volatile
+关键字，这时候，编译器知道该变量的值会在外部改变，因此每次访问该变量时会重新读取，所作
+的循环变为如下面伪码所示：
+
+label:
+mov ax,signal
+if(ax!=1)
+goto label
+
+2.3.5.2.3 Memory
+
+有了上面的知识就不难理解Memory
+修改描述符了，Memory描述符告知GCC：
+（1）不要将该段内嵌汇编指令与前面的指令重新排序；也就是在执行内嵌汇编代码之前，
+它前面的指令都执行完毕。
+
+（2）不要将变量缓存到寄存器，因为这段代码可能会用到内存变量，而这些内存变量会
+以不可预知的方式发生改变，因此GCC插入必要的代码先将缓存到寄存器的变量值写回内存，
+如果后面又访问这些变量，需要重新访问内存。
+
+如果汇编指令修改了内存，但是GCC本身却察觉不到，因为在输出部分没有描述，
+此时就需要在修改描述部分增加"memory"，告诉GCC内存已经被修改，GCC得知这个信息后，
+就会在这段指令之前，插入必要的指令将前面因为优化Cache到寄存器中的变量值先写回内存，
+如果以后又要使用这些变量再重新读取。 
+
+例：
+………..
+Char test[100];
+char a;
+char c;
+
+c = 0;
+test[0] = 1;
+……..
+a = test [0];
+……
+__asm__(
+"cld\n\t"
+"rep\n\t"
+"stosb"
+: /* no output */
+
+: "a" (c),"D" (test),"c" (100)
+:
+"cx","di","memory");
+……….
+// 我们知道test[0] 已经修改，所以重新读取
+a=test[0];
+
+……
+
+这段代码中的汇编指令功能与
+memset
+相当，也就是相当于调用了memset(test,0,100)；它使用stosb修改了test
+数组的内容，但是没有在输入或输出部分去描述操作数，因为这两条指令都不需要
+显式的指定操作数，因此需要增加"memory"通知GCC。现在假设：GCC在优化时将test[0]
+放到了%eax寄存器，那么test[0] = 1对应于%eax=1，a = test [0]被换为a=%eax
+，如果在那段汇编指令中不使用"memory"，Gcc，不知道现在test[0]
+的值已经被改变了（如果整段代码都是我们自己使用汇编编写，我们自己当然知道
+这些内存的修改情况，我们也可以人为的去优化，但是现在除了我们编写的那一小段外，
+其他汇编代码都是GCC
+生成的，它并没有那么智能，知道这段代码会修改test[0]），结果其后的a=test[0]
+，转换为汇编后却是a=%eax，因为GCC不知道显式的改变了test数组，结果出错了。
+如果增加了"memory"修饰符，GCC知道：
+"这段代码修改了内存，但是也仅此而已，它并不知道到底修改了哪些变量"，
+因此他将以前因优化而缓存到寄存器的变量值全部写回内存，从内嵌汇编开始，如果后面
+的代码又要存取这些变量，则重新存取内存（不会将读写操作映射到以前缓存的那个寄存器）。
+这样上面那段代码最后一句就不再是%eax=1，而是test[0] = 1。
+
+这两条对实现临界区至关重要，第一条保证不会因为指令的重新排序将临界区内的代码调
+到临界区之外（如果临界区内的指令被重排序放到临界区之外，What will happen?），
+第二条保证在临界区访问的变量的值，肯定是最新的值，而不是缓存在
+寄存器中的值，否则就会导致奇怪的错误。例如下面的代码：
+
+int del_timer(struct timer_list * timer)
+{
+int
+ret = 0;
+if
+(timer->next) {
+unsigned
+long flags;
+struct
+timer_list * next;
+save_flags(flags);
+cli();
+
+// 临界区开始
+if
+((next = timer->next) != NULL) {
+(next->prev = timer->prev)->next = next;
+timer->next = timer->prev = NULL;
+ret = 1;
+} // 临界区结束
+
+restore_flags(flags);
+}
+return
+ret;
+}
+
+它先判断timer->next
+的值，如果是空直接返回，无需进行下面的操作。如果不是空，则进入临界区进行操作，但是cli()
+的实现（见下面）没有使用"memory"，timer->next的值可能会被缓存到寄存器中，
+后面if ((next =timer->next) != NULL)会从寄存器中读取timer->next的值，如果
+在if (timer->next)之后，进入临界区之前，timer->next的值可能被在外部改变，
+这时肯定会出现异常情况，而且这种情况很难Debug。但是如果cli使用"memory"，
+那么if ((next = timer->next) !=NULL)语句会重新从内存读取timer->next的值，而不会从寄存器
+中取，这样就不会出现问题啦。
+
+2.4 版内核中cli和sti的代码如下：
+#define __cli()
+__asm__
+__volatile__("cli": : :"memory")
+#define __sti()
+__asm__
+__volatile__("sti": : :"memory")
+
+通过上面的例子，读者应该知道，为什么指令没有修改内存，但是却使用"memory
+"修改描述符的原因了吧。应从指令的上下文去理解为什么要这样做。
+
+使用"volatile"也可以达到这个目的，但是我们在每个变量前增加该关键字，
+不如使用"memory"方便。
+
+2.4 GCC如何编译内嵌汇编代码
+
+GCC 编译内嵌汇编代码的步骤如下：
+
+1.输入变量与占位符
+
+根据限定符和破坏描述部分，为输入和输出部分的变量分配合适的寄存器，如果限定符指定为立即数
+("i")，或内存变量("m")，则不需要该步骤，如果限定符没有具体指定输入操作数的
+类型(如"g")，GCC会视需要决定是否将该操作数输入到某个寄存器。这样每个占位符都与某个
+寄存器、内存变量或立即数形成了一一对应的关系。对分配了寄存器的输入变量需要增加代码
+将它的值读入寄存器。另外还要根据破坏描述符的部分增加额外代码。
+
+2.指令模板部分
+然后根据这种一一对应的关系，用这些寄存器、内存变量或立即数来取代汇编代码中的占位符。
+
+3.变量输出
+
+按照输出限定符的指定将寄存器的内容输出到某个内存变量中，如果输出操作数的限定符指定为内存变量("m")，则该步骤被省略。
+
+3 后记
+
+该文档参照了Web上的许多与GCC内嵌汇编相关的文章编写而成，在此表示感谢，
+---------------------------------------------------------------------------------
+AT&T与INTEL的汇编语言语法的区别- -
+                                       
+1、大小写 
+INTEL格式的指令使用大写字母，而AT&T格式的使用小写字母。 
+例： 
+    INTEL                          AT&T 
+      MOV EAX,EBX              movl %ebx,%eax 
+
+2、操作数赋值方向 
+在INTEL语法中，第一个表示目的操作数，第二个表示源操作数，赋值方向从右向左。 
+AT&T语法第一个为源操作数，第二个为目的操作数，方向从左到右，合乎自然。 
+例： 
+    INTEL                          AT&T 
+      MOV EAX,EBX              movl %ebx,%eax 
+
+3、前缀 
+在INTEL 语法中寄存器和立即数不需要前缀；AT&T 中寄存器需要加前缀“%”；立即数 
+需要加前缀“$”。 
+例： 
+    INTEL                         AT&T 
+      MOV EAX,1                 movl $1,%eax 
+
+符号常数直接引用，不需要加前缀，如：movl value , %ebx，value为一常数；在符 
+号前加前缀$表示引用符号地址, 如movl $value, %ebx，是将value的地址放到ebx中。 
+总线锁定前缀“lock”：总线锁定操作。“lock”前缀在Linux 核心代码中使用很多，特 
+别是SMP代码中。当总线锁定后其它CPU不能存取锁定地址处的内存单元。 
+
+远程跳转指令和子过程调用指令的操作码使用前缀“l“，分别为ljmp，lcall，与之 
+相应的返回指令伪lret。 
+例： 
+    INTEL                                      AT&T 
+      CALL FAR SECTION:OFFSET    lcall $secion:$offset 
+      JMP FAR SECTION:OFFSET      ljmp $secion:$offset 
+      RET FAR SATCK_ADJUST         lret $stack_adjust 
+
+4 、间接寻址语法 
+INTEL 中基地址使用“[”、“] ”，而在AT&T 中使用“(”、“) ”；另外处理复杂操作数的 
+语法也不同， INTEL 为Segreg:[base+index*scale+disp] ， 而在AT&T 中为 
+%segreg:disp(base,index,sale)，其中segreg，index，scale，disp都是可选的，在指定 
+index而没有显式指定Scale的情况下使用默认值1。Scale和disp不需要加前缀“&”。 
+    INTEL                                                      AT&T 
+      Instr                                                        instr 
+      foo,segreg:[base+index*scale+disp]     %segreg:disp(base,index,scale),foo 
+
+5、后缀 
+AT&T 语法中大部分指令操作码的最后一个字母表示操作数大小，“b”表示byte（一个 
+字节）；“w ”表示word（2 个字节）；“l ”表示long（4 个字节）。INTEL 中处理内存操作数 
+时也有类似的语法如：BYTE PTR、WORD PTR、DWORD PTR。 
+例： 
+   INTEL                                      AT&T 
+     mov al, bl                               movb %bl,%al 
+     mov ax,bx                              movw %bx,%ax 
+     mov eax, dword ptr [ebx]      movl (%ebx), %eax 
+
+在AT&T 汇编指令中，操作数扩展指令有两个后缀，一个指定源操作数的字长，另一个 
+指定目标操作数的字长。AT&T 的符号扩展指令的为“movs”，零扩展指令为“movz”（相应 
+的Intel指令为“movsx”和“movzx”）。因此，“movsbl %al,%edx”表示对寄存器al 中的 
+字节数据进行字节到长字的符号扩展，计算结果存放在寄存器edx中。下面是一些允许的操 
+作数扩展后缀： 
+                    bl: 字节->长字 
+                    bw: 字节->字 
+                    wl: 字->长字 
+跳转指令标号后的后缀表示跳转方向，“f”表示向前（forward），“b”表示向后（back）。 
+例： 
+             jmp 1f 
+            1:    jmp 1f 
+            1: 
+
+6、指令 
+INTEL 汇编与AT&T 汇编指令基本相同，差别仅在语法上。关于每条指令的语法可以参考I386 Manual。  
+
+ 
+
+***********************************************************************************
+
+AT&T汇编语言语法 .
+
+
+ 
+
+开发一个OS，尽管绝大部分代码只需要用C/C++等高级语言就可以了，但至少和硬件相关部分的代码需要使用汇编语言，另外，由于启动部分的代码有大小限制，使用精练的汇编可以缩小目标代码的Size。另外，对于某些需要被经常调用的代码，使用汇编来写可以提高性能。所以我们必须了解汇编语言，即使你有可能并不喜欢它。
+
+ 
+
+如果你是计算机专业的话，在大学里你应该学习过Intel格式的8086/80386汇编，这里就不再讨论。如果我们选择的OS开发工具是GCC以及GAS的话，就必须了解AT&T汇编语言语法，因为GCC/GAS只支持这种汇编语法。
+
+ 
+
+本书不会去讨论8086/80386的汇编编程，这类的书籍很多，你可以参考它们。这里只会讨论AT&T的汇编语法，以及GCC的内嵌汇编语法。
+
+
+ 
+
+ 
+
+0.3.2 Syntax 
+
+1.寄存器引用
+
+引用寄存器要在寄存器号前加百分号%,如“movl %eax, %ebx”。
+
+80386有如下寄存器：
+
+?8个32-bit寄存器 %eax，%ebx，%ecx，%edx，%edi，%esi，%ebp，%esp； 
+?8个16-bit寄存器，它们事实上是上面8个32-bit寄存器的低16位：%ax，%bx，%cx，%dx，%di，%si，%bp，%sp； 
+?8个8-bit寄存器：%ah，%al，%bh，%bl，%ch，%cl，%dh，%dl。它们事实上是寄存器%ax，%bx，%cx，%dx的高8位和低8位； 
+?6个段寄存器：%cs(code)，%ds(data)，%ss(stack), %es，%fs，%gs； 
+?3个控制寄存器：%cr0，%cr2，%cr3； 
+?6个debug寄存器：%db0，%db1，%db2，%db3，%db6，%db7； 
+?2个测试寄存器：%tr6，%tr7； 
+?8个浮点寄存器栈：%st(0)，%st(1)，%st(2)，%st(3)，%st(4)，%st(5)，%st(6)，%st(7)。
+2. 操作数顺序
+
+操作数排列是从源（左）到目的（右），如“movl %eax(源）, %ebx(目的）”
+
+3. 立即数
+
+使用立即数，要在数前面加符号$, 如“movl $0x04, %ebx”
+
+或者：
+
+para = 0x04
+
+movl $para, %ebx
+
+指令执行的结果是将立即数04h装入寄存器ebx。
+
+4. 符号常数
+
+符号常数直接引用 如
+
+value: .long 0x12a3f2de
+
+movl value , %ebx
+
+指令执行的结果是将常数0x12a3f2de装入寄存器ebx。
+
+引用符号地址在符号前加符号$, 如“movl $value, % ebx”则是将符号value的地址装入寄存器ebx。
+
+5. 操作数的长度
+
+操作数的长度用加在指令后的符号表示b(byte, 8-bit), w(word, 16-bits), l(long, 32-bits)，如“movb %al, %bl”，“movw %ax, %bx”，“movl %eax, %ebx ”。
+
+如果没有指定操作数长度的话，编译器将按照目标操作数的长度来设置。比如指令“mov %ax, %bx”，由于目标操作数bx的长度为word，那么编译器将把此指令等同于“movw %ax, %bx”。同样道理，指令“mov $4, %ebx”等同于指令“movl $4, %ebx”，“push %al”等同于“pushb %al”。对于没有指定操作数长度，但编译器又无法猜测的指令，编译器将会报错，比如指令“push $4”。
+
+6. 符号扩展和零扩展指令
+
+绝大多数面向80386的AT&T汇编指令与Intel格式的汇编指令都是相同的，符号扩展指令和零扩展指令则是仅有的不同格式指令。
+
+符号扩展指令和零扩展指令需要指定源操作数长度和目的操作数长度，即使在某些指令中这些操作数是隐含的。
+
+在AT&T语法中，符号扩展和零扩展指令的格式为，基本部分"movs"和"movz"（对应Intel语法的movsx和movzx），后面跟上源操作数长度和目的操作数长度。movsbl意味着movs （from）byte （to）long；movbw意味着movs （from）byte （to）word；movswl意味着movs （from）word （to）long。对于movz指令也一样。比如指令“movsbl %al, %edx”意味着将al寄存器的内容进行符号扩展后放置到edx寄存器中。
+
+其它的Intel格式的符号扩展指令还有：
+
+?cbw -- sign-extend byte in %al to word in %ax； 
+?cwde -- sign-extend word in %ax to long in %eax； 
+?cwd -- sign-extend word in %ax to long in %dx:%ax； 
+?cdq -- sign-extend dword in %eax to quad in %edx:%eax；
+对应的AT&T语法的指令为cbtw，cwtl，cwtd，cltd。
+
+7. 调用和跳转指令
+
+段内调用和跳转指令为"call"，"ret"和"jmp"，段间调用和跳转指令为"lcall"，"lret"和"ljmp"。
+
+段间调用和跳转指令的格式为“lcall/ljmp $SECTION, $OFFSET”，而段间返回指令则为“lret $STACK-ADJUST”。
+
+8. 前缀
+
+操作码前缀被用在下列的情况：
+
+?字符串重复操作指令(rep,repne)； 
+?指定被操作的段(cs,ds,ss,es,fs,gs)； 
+?进行总线加锁(lock)； 
+?指定地址和操作的大小(data16,addr16)；
+在AT&T汇编语法中，操作码前缀通常被单独放在一行，后面不跟任何操作数。例如，对于重复scas指令，其写法为：
+
+             repne
+             scas
+
+上述操作码前缀的意义和用法如下：
+
+?指定被操作的段前缀为cs,ds,ss,es,fs,和gs。在AT&T语法中，只需要按照section:memory-operand的格式就指定了相应的段前缀。比如：lcall %cs:realmode_swtch 
+?操作数／地址大小前缀是“data16”和"addr16"，它们被用来在32-bit操作数／地址代码中指定16-bit的操作数／地址。 
+?总线加锁前缀“lock”，它是为了在多处理器环境中，保证在当前指令执行期间禁止一切中断。这个前缀仅仅对ADD, ADC, AND, BTC, BTR, BTS, CMPXCHG,DEC, INC, NEG, NOT, OR, SBB, SUB, XOR, XADD,XCHG指令有效，如果将Lock前缀用在其它指令之前，将会引起异常。 
+?字符串重复操作前缀"rep","repe","repne"用来让字符串操作重复“%ecx”次。
+
+9. 内存引用
+
+Intel语法的间接内存引用的格式为：
+
+section:[base+index*scale+displacement]
+
+而在AT&T语法中对应的形式为：
+
+section:displacement(base,index,scale)
+
+其中，base和index是任意的32-bit base和index寄存器。scale可以取值1，2，4，8。如果不指定scale值，则默认值为1。section可以指定任意的段寄存器作为段前缀，默认的段寄存器在不同的情况下不一样。如果你在指令中指定了默认的段前缀，则编译器在目标代码中不会产生此段前缀代码。
+
+下面是一些例子：
+
+-4(%ebp)：base=%ebp，displacement=-4，section没有指定，由于base＝%ebp，所以默认的section=%ss，index,scale没有指定，则index为0。
+
+foo(,%eax,4)：index=%eax，scale=4，displacement=foo。其它域没有指定。这里默认的section=%ds。
+
+foo(,1)：这个表达式引用的是指针foo指向的地址所存放的值。注意这个表达式中没有base和index，并且只有一个逗号，这是一种异常语法，但却合法。
+
+%gs:foo：这个表达式引用的是放置于%gs段里变量foo的值。
+
+如果call和jump操作在操作数前指定前缀“*”，则表示是一个绝对地址调用/跳转，也就是说jmp/call指令指定的是一个绝对地址。如果没有指定"*"，则操作数是一个相对地址。
+
+任何指令如果其操作数是一个内存操作，则指令必须指定它的操作尺寸(byte,word,long），也就是说必须带有指令后缀(b,w,l)。
+
+
+ 
+
+
+
+0.3.3 GCC Inline ASM
+
+GCC支持在C/C++代码中嵌入汇编代码，这些汇编代码被称作GCC Inline ASM——GCC内联汇编。这是一个非常有用的功能，有利于我们将一些C/C++语法无法表达的指令直接潜入C/C++代码中，另外也允许我们直接写C/C++代码中使用汇编编写简洁高效的代码。
+
+1.基本内联汇编
+
+GCC中基本的内联汇编非常易懂，我们先来看两个简单的例子：
+
+__asm__("movl %esp,%eax");  // 看起来很熟悉吧！
+
+或者是
+
+__asm__("
+   movl $1,%eax  // SYS_exit
+   xor %ebx,%ebx
+   int $0x80
+ ");
+
+或
+
+__asm__(
+   "movl $1,%eax/r/t" /
+   "xor %ebx,%ebx/r/t" /
+   "int $0x80" /
+   );
+
+基本内联汇编的格式是
+
+__asm__ __volatile__("Instruction List");
+
+
+1、__asm__ 
+
+__asm__是GCC关键字asm的宏定义：
+
+#define __asm__ asm
+
+__asm__或asm用来声明一个内联汇编表达式，所以任何一个内联汇编表达式都是以它开头的，是必不可少的。
+
+2、Instruction List
+
+Instruction List是汇编指令序列。它可以是空的，比如：__asm__ __volatile__(""); 或__asm__ ("");都是完全合法的内联汇编表达式，只不过这两条语句没有什么意义。但并非所有Instruction List为空的内联汇编表达式都是没有意义的，比如：__asm__ ("":::"memory"); 就非常有意义，它向GCC声明：“我对内存作了改动”，GCC在编译的时候，会将此因素考虑进去。
+
+我们看一看下面这个例子：
+
+$ cat example1.c
+
+int main(int __argc, char* __argv[])  
+{                                     
+        int* __p = (int*)__argc;      
+                                      
+        (*__p) = 9999;                
+                                      
+        //__asm__("":::"memory");       
+                                      
+        if((*__p) == 9999)            
+                return 5;             
+                                      
+        return (*__p);                
+}
+
+在这段代码中，那条内联汇编是被注释掉的。在这条内联汇编之前，内存指针__p所指向的内存被赋值为9999，随即在内联汇编之后，一条if语句判断__p所指向的内存与9999是否相等。很明显，它们是相等的。GCC在优化编译的时候能够很聪明的发现这一点。我们使用下面的命令行对其进行编译：
+
+$ gcc -O -S example1.c
+
+选项-O表示优化编译，我们还可以指定优化等级，比如-O2表示优化等级为2；选项-S表示将C/C++源文件编译为汇编文件，文件名和C/C++文件一样，只不过扩展名由.c变为.s。
+
+我们来查看一下被放在example1.s中的编译结果，我们这里仅仅列出了使用gcc 2.96在redhat 7.3上编译后的相关函数部分汇编代码。为了保持清晰性，无关的其它代码未被列出。
+
+$ cat example1.s
+
+main:                         
+        pushl   %ebp          
+        movl    %esp, %ebp    
+        movl    8(%ebp), %eax     # int* __p = (int*)__argc
+        movl    $9999, (%eax)      # (*__p) = 9999 
+        movl    $5, %eax              # return 5
+        popl    %ebp          
+        ret
+
+参照一下C源码和编译出的汇编代码，我们会发现汇编代码中，没有if语句相关的代码，而是在赋值语句(*__p)=9999后直接return 5；这是因为GCC认为在(*__p)被赋值之后，在if语句之前没有任何改变(*__p)内容的操作，所以那条if语句的判断条件(*__p) == 9999肯定是为true的，所以GCC就不再生成相关代码，而是直接根据为true的条件生成return 5的汇编代码（GCC使用eax作为保存返回值的寄存器）。
+
+我们现在将example1.c中内联汇编的注释去掉，重新编译，然后看一下相关的编译结果。
+
+$ gcc -O -S example1.c
+
+$ cat example1.s
+
+main:                          
+        pushl   %ebp           
+        movl    %esp, %ebp     
+        movl    8(%ebp), %eax   # int* __p = (int*)__argc
+        movl    $9999, (%eax)    # (*__p) = 9999
+#APP                           
+
+                                               # __asm__("":::"memory")
+#NO_APP
+        cmpl    $9999, (%eax)    # (*__p) == 9999 ?
+        jne     .L3                        # false   
+        movl    $5, %eax            # true, return 5 
+        jmp     .L2            
+        .p2align 2             
+.L3:                           
+        movl    (%eax), %eax   
+.L2:                           
+        popl    %ebp           
+        ret
+
+由于内联汇编语句__asm__("":::"memory")向GCC声明，在此内联汇编语句出现的位置内存内容可能了改变，所以GCC在编译时就不能像刚才那样处理。这次，GCC老老实实的将if语句生成了汇编代码。
+
+可能有人会质疑：为什么要使用__asm__("":::"memory")向GCC声明内存发生了变化？明明“Instruction List”是空的，没有任何对内存的操作，这样做只会增加GCC生成汇编代码的数量。
+
+确实，那条内联汇编语句没有对内存作任何操作，事实上它确实什么都没有做。但影响内存内容的不仅仅是你当前正在运行的程序。比如，如果你现在正在操作的内存是一块内存映射，映射的内容是外围I/O设备寄存器。那么操作这块内存的就不仅仅是当前的程序，I/O设备也会去操作这块内存。既然两者都会去操作同一块内存，那么任何一方在任何时候都不能对这块内存的内容想当然。所以当你使用高级语言C/C++写这类程序的时候，你必须让编译器也能够明白这一点，毕竟高级语言最终要被编译为汇编代码。
+
+你可能已经注意到了，这次输出的汇编结果中，有两个符号：#APP和#NO_APP，GCC将内联汇编语句中"Instruction List"所列出的指令放在#APP和#NO_APP之间，由于__asm__("":::"memory")中“Instruction List”为空，所以#APP和#NO_APP中间也没有任何内容。但我们以后的例子会更加清楚的表现这一点。
+
+关于为什么内联汇编__asm__("":::"memory")是一条声明内存改变的语句，我们后面会详细讨论。
+
+刚才我们花了大量的内容来讨论"Instruction List"为空是的情况，但在实际的编程中，"Instruction List"绝大多数情况下都不是空的。它可以有1条或任意多条汇编指令。
+
+当在"Instruction List"中有多条指令的时候，你可以在一对引号中列出全部指令，也可以将一条或几条指令放在一对引号中，所有指令放在多对引号中。如果是前者，你可以将每一条指令放在一行，如果要将多条指令放在一行，则必须用分号（；）或换行符（/n，大多数情况下/n后还要跟一个/t，其中/n是为了换行，/t是为了空出一个tab宽度的空格）将它们分开。比如：
+
+ __asm__("movl %eax, %ebx    
+                   sti                
+                   popl %edi          
+                   subl %ecx, %ebx"); 
+
+ __asm__("movl %eax, %ebx; sti         
+                   popl %edi; subl %ecx, %ebx");
+
+ __asm__("movl %eax, %ebx; sti/n/t popl %edi
+                   subl %ecx, %ebx");
+
+都是合法的写法。如果你将指令放在多对引号中，则除了最后一对引号之外，前面的所有引号里的最后一条指令之后都要有一个分号(；)或(/n)或(/n/t)。比如：
+
+ __asm__("movl %eax, %ebx    
+                    sti/n"                
+                   "popl %edi;"          
+                   "subl %ecx, %ebx"); 
+
+ __asm__("movl %eax, %ebx; sti/n/t"         
+                 "popl %edi; subl %ecx, %ebx");
+
+ __asm__("movl %eax, %ebx; sti/n/t popl %edi/n"
+                 "subl %ecx, %ebx");
+
+__asm__("movl %eax, %ebx; sti/n/t popl %edi;" "subl %ecx, %ebx");
+
+都是合法的。
+
+上述原则可以归结为：
+
+?任意两个指令间要么被分号(；)分开，要么被放在两行； 
+?放在两行的方法既可以从通过/n的方法来实现，也可以真正的放在两行； 
+?可以使用1对或多对引号，每1对引号里可以放任一多条指令，所有的指令都要被放到引号中。
+在基本内联汇编中，“Instruction List”的书写的格式和你直接在汇编文件中写非内联汇编没有什么不同，你可以在其中定义Label，定义对齐(.align n )，定义段(.section name )。例如：
+
+ __asm__(".align 2/n/t"         
+                 "movl %eax, %ebx/n/t"  
+                 "test %ebx, %ecx/n/t"  
+                 "jne error/n/t"        
+                 "sti/n/t"              
+                 "error: popl %edi/n/t" 
+                 "subl %ecx, %ebx");
+
+上面例子的格式是Linux内联代码常用的格式，非常整齐。也建议大家都使用这种格式来写内联汇编代码。
+
+
+3、__volatile__
+
+__volatile__是GCC关键字volatile的宏定义：
+
+#define __volatile__ volatile
+
+__volatile__或volatile是可选的，你可以用它也可以不用它。如果你用了它，则是向GCC声明“不要动我所写的Instruction List，我需要原封不动的保留每一条指令”，否则当你使用了优化选项(-O)进行编译时，GCC将会根据自己的判断决定是否将这个内联汇编表达式中的指令优化掉。
+
+那么GCC判断的原则是什么？我不知道（如果有哪位朋友清楚的话，请告诉我）。我试验了一下，发现一条内联汇编语句如果是基本内联汇编的话（即只有“Instruction List”，没有Input/Output/Clobber的内联汇编，我们后面将会讨论这一点），无论你是否使用__volatile__来修饰，GCC 2.96在优化编译时，都会原封不动的保留内联汇编中的“Instruction List”。但或许我的试验的例子并不充分，所以这一点并不能够得到保证。
+
+为了保险起见，如果你不想让GCC的优化影响你的内联汇编代码，你最好在前面都加上__volatile__，而不要依赖于编译器的原则，因为即使你非常了解当前编译器的优化原则，你也无法保证这种原则将来不会发生变化。而__volatile__的含义却是恒定的。
+
+2、带有C/C++表达式的内联汇编 
+
+GCC允许你通过C/C++表达式指定内联汇编中"Instrcuction List"中指令的输入和输出，你甚至可以不关心到底使用哪个寄存器被使用，完全靠GCC来安排和指定。这一点可以让程序员避免去考虑有限的寄存器的使用，也可以提高目标代码的效率。
+
+我们先来看几个例子：
+
+__asm__ (" " : : : "memory" );  // 前面提到的
+
+__asm__ ("mov %%eax, %%ebx" : "=b"(rv) : "a"(foo) : "eax", "ebx");
+
+__asm__ __volatile__("lidt %0": "=m" (idt_descr));
+
+__asm__("subl %2,%0/n/t"
+                "sbbl %3,%1"
+                : "=a" (endlow), "=d" (endhigh)
+                : "g" (startlow), "g" (starthigh), "0" (endlow), "1" (endhigh));
+
+怎么样，有点印象了吧，是不是也有点晕？没关系，下面讨论完之后你就不会再晕了。（当然，也有可能更晕^_^）。讨论开始——
+
+带有C/C++表达式的内联汇编格式为：
+
+__asm__　__volatile__("Instruction List" : Output : Input : Clobber/Modify);
+
+从中我们可以看出它和基本内联汇编的不同之处在于：它多了3个部分(Input，Output，Clobber/Modify)。在括号中的4个部分通过冒号(:)分开。
+
+这4个部分都不是必须的，任何一个部分都可以为空，其规则为：
+
+?如果Clobber/Modify为空，则其前面的冒号(:)必须省略。比如__asm__("mov %%eax, %%ebx" : "=b"(foo) : "a"(inp) : )就是非法的写法；而__asm__("mov %%eax, %%ebx" : "=b"(foo) : "a"(inp) )则是正确的。 
+?如果Instruction List为空，则Input，Output，Clobber/Modify可以不为空，也可以为空。比如__asm__ ( " " : : : "memory" );和__asm__(" " : : );都是合法的写法。
+?如果Output，Input，Clobber/Modify都为空，Output，Input之前的冒号(:)既可以省略，也可以不省略。如果都省略，则此汇编退化为一个基本内联汇编，否则，仍然是一个带有C/C++表达式的内联汇编，此时"Instruction List"中的寄存器写法要遵守相关规定，比如寄存器前必须使用两个百分号(%%)，而不是像基本汇编格式一样在寄存器前只使用一个百分号(%)。比如__asm__( " mov %%eax, %%ebx" : : )；__asm__( " mov %%eax, %%ebx" : )和__asm__( " mov %eax, %ebx" )都是正确的写法，而__asm__( " mov %eax, %ebx" : : )；__asm__( " mov %eax, %ebx" : )和__asm__( " mov %%eax, %%ebx" )都是错误的写法。 
+?如果Input，Clobber/Modify为空，但Output不为空，Input前的冒号(:)既可以省略，也可以不省略。比如__asm__( " mov %%eax, %%ebx" : "=b"(foo) : )；__asm__( " mov %%eax, %%ebx" : "=b"(foo) )都是正确的。 
+?如果后面的部分不为空，而前面的部分为空，则前面的冒号(:)都必须保留，否则无法说明不为空的部分究竟是第几部分。比如， Clobber/Modify，Output为空，而Input不为空，则Clobber/Modify前的冒号必须省略（前面的规则），而Output前的冒号必须为保留。如果Clobber/Modify不为空，而Input和Output都为空，则Input和Output前的冒号都必须保留。比如__asm__( " mov %%eax, %%ebx" : : "a"(foo) )和__asm__( " mov %%eax, %%ebx" : : : "ebx" )。
+从上面的规则可以看到另外一个事实，区分一个内联汇编是基本格式的还是带有C/C++表达式格式的，其规则在于在"Instruction List"后是否有冒号(:)的存在，如果没有则是基本格式的，否则，则是带有C/C++表达式格式的。
+
+两种格式对寄存器语法的要求不同：基本格式要求寄存器前只能使用一个百分号(%)，这一点和非内联汇编相同；而带有C/C++表达式格式则要求寄存器前必须使用两个百分号(%%)，其原因我们会在后面讨论。
+
+1. Output
+
+Output用来指定当前内联汇编语句的输出。我们看一看这个例子：
+
+__asm__("movl %%cr0, %0": "=a" (cr0));
+
+这个内联汇编语句的输出部分为"=r"(cr0)，它是一个“操作表达式”，指定了一个输出操作。我们可以很清楚得看到这个输出操作由两部分组成：括号括住的部分(cr0)和引号引住的部分"=a"。这两部分都是每一个输出操作必不可少的。括号括住的部分是一个C/C++表达式，用来保存内联汇编的一个输出值，其操作就等于C/C++的相等赋值cr0 = output_value，因此，括号中的输出表达式只能是C/C++的左值表达式，也就是说它只能是一个可以合法的放在C/C++赋值操作中等号(=)左边的表达式。那么右值output_value从何而来呢？
+
+答案是引号中的内容，被称作“操作约束”（Operation Constraint），在这个例子中操作约束为"=a"，它包含两个约束：等号(=)和字母a，其中等号(=)说明括号中左值表达式cr0是一个Write-Only的，只能够被作为当前内联汇编的输入，而不能作为输入。而字母a是寄存器EAX / AX / AL的简写，说明cr0的值要从eax寄存器中获取，也就是说cr0 = eax，最终这一点被转化成汇编指令就是movl %eax, address_of_cr0。现在你应该清楚了吧，操作约束中会给出：到底从哪个寄存器传递值给cr0。
+
+另外，需要特别说明的是，很多文档都声明，所有输出操作的操作约束必须包含一个等号(=)，但GCC的文档中却很清楚的声明，并非如此。因为等号(=)约束说明当前的表达式是一个Write-Only的，但另外还有一个符号——加号(+)用来说明当前表达式是一个Read-Write的，如果一个操作约束中没有给出这两个符号中的任何一个，则说明当前表达式是Read-Only的。因为对于输出操作来说，肯定是必须是可写的，而等号(=)和加号(+)都表示可写，只不过加号(+)同时也表示是可读的。所以对于一个输出操作来说，其操作约束只需要有等号(=)或加号(+)中的任意一个就可以了。
+
+二者的区别是：等号(=)表示当前操作表达式指定了一个纯粹的输出操作，而加号(+)则表示当前操作表达式不仅仅只是一个输出操作还是一个输入操作。但无论是等号(=)约束还是加号(+)约束所约束的操作表达式都只能放在Output域中，而不能被用在Input域中。
+
+另外，有些文档声明：尽管GCC文档中提供了加号(+)约束，但在实际的编译中通不过；我不知道老版本会怎么样，我在GCC 2.96中对加号(+)约束的使用非常正常。
+
+我们通过一个例子看一下，在一个输出操作中使用等号(=)约束和加号(+)约束的不同。
+
+$ cat example2.c
+
+int main(int __argc, char* __argv[])                           
+{                                                              
+        int cr0 = 5;                                              
+                                                               
+        __asm__ __volatile__("movl %%cr0, %0":"=a" (cr0));     
+                                                               
+        return 0;                                              
+}
+
+$ gcc -S example2.c
+
+$ cat example2.s
+
+main:                         
+        pushl   %ebp          
+        movl    %esp, %ebp    
+        subl    $4, %esp      
+        movl    $5, -4(%ebp)     # cr0 = 5
+#APP                          
+        movl %cr0, %eax       
+#NO_APP                       
+        movl    %eax, %eax    
+        movl    %eax, -4(%ebp)   # cr0 = %eax
+        movl    $0, %eax      
+        leave                 
+        ret                   
+
+
+这个例子是使用等号(=)约束的情况，变量cr0被放在内存-4(%ebp)的位置，所以指令mov %eax, -4(%ebp)即表示将%eax的内容输出到变量cr0中。
+
+下面是使用加号(+)约束的情况：
+
+$ cat example3.c
+
+int main(int __argc, char* __argv[])                           
+{                                                              
+        int cr0 = 5;                                              
+                                                               
+        __asm__ __volatile__("movl %%cr0, %0" : "+a" (cr0));     
+                                                               
+        return 0;                                              
+}
+
+$ gcc -S example3.c
+
+$ cat example3.s
+
+main:                            
+        pushl   %ebp             
+        movl    %esp, %ebp       
+        subl    $4, %esp         
+        movl    $5, -4(%ebp)        # cr0 = 5
+        movl    -4(%ebp), %eax    # input ( %eax = cr0 )
+#APP                             
+        movl    %cr0, %eax
+#NO_APP
+        movl    %eax, -4(%ebp)    # output (cr0 = %eax )
+        movl    $0, %eax
+        leave
+        ret
+
+
+从编译的结果可以看出，当使用加号(+)约束的时候，cr0不仅作为输出，还作为输入，所使用寄存器都是寄存器约束(字母a，表示使用eax寄存器)指定的。关于寄存器约束我们后面讨论。
+
+在Output域中可以有多个输出操作表达式，多个操作表达式中间必须用逗号(,)分开。例如：
+
+ __asm__(                           
+        "movl   %%eax, %0 /n/t"              
+        "pushl  %%ebx /n/t"                 
+        "popl    %1 /n/t"                     
+        "movl   %1, %2"                      
+        : "+a"(cr0), "=b"(cr1), "=c"(cr2));
+
+
+2、Input
+
+Input域的内容用来指定当前内联汇编语句的输入。我们看一看这个例子：
+
+__asm__("movl %0, %%db7" : : "a" (cpu->db7));
+
+例中Input域的内容为一个表达式"a"[cpu->db7)，被称作“输入表达式”，用来表示一个对当前内联汇编的输入。
+
+像输出表达式一样，一个输入表达式也分为两部分：带括号的部分(cpu->db7)和带引号的部分"a"。这两部分对于一个内联汇编输入表达式来说也是必不可少的。
+
+括号中的表达式cpu->db7是一个C/C++语言的表达式，它不必是一个左值表达式，也就是说它不仅可以是放在C/C++赋值操作左边的表达式，还可以是放在C/C++赋值操作右边的表达式。所以它可以是一个变量，一个数字，还可以是一个复杂的表达式（比如a+b/c*d）。比如上例可以改为：__asm__("movl %0, %%db7" : : "a" (foo))，__asm__("movl %0, %%db7" : : "a" (0x1000))或__asm__("movl %0, %%db7" : : "a" (va*vb/vc))。
+
+引号号中的部分是约束部分，和输出表达式约束不同的是，它不允许指定加号(+)约束和等号(=)约束，也就是说它只能是默认的Read-Only的。约束中必须指定一个寄存器约束，例中的字母a表示当前输入变量cpu->db7要通过寄存器eax输入到当前内联汇编中。
+
+我们看一个例子：
+
+$ cat example4.c
+
+int main(int __argc, char* __argv[])                         
+{                                                            
+        int cr0  = 5;                                        
+                                                             
+        __asm__ __volatile__("movl %0, %%cr0"::"a" (cr0));   
+                                                             
+        return 0;                                            
+}
+
+$ gcc -S example4.c
+
+$ cat example4.s
+
+main:                              
+        pushl   %ebp               
+        movl    %esp, %ebp         
+        subl    $4, %esp           
+        movl    $5, -4(%ebp)          # cr0 = 5       
+        movl    -4(%ebp), %eax     # %eax = cr0
+#APP                               
+        movl    %eax, %cr0            
+#NO_APP                            
+        movl    $0, %eax           
+        leave                      
+        ret                        
+
+
+我们从编译出的汇编代码可以看到，在"Instruction List"之前，GCC按照我们的输入约束"a"，将变量cr0的内容装入了eax寄存器。
+
+3. Operation Constraint
+
+每一个Input和Output表达式都必须指定自己的操作约束Operation Constraint，我们这里来讨论在80386平台上所可能使用的操作约束。
+
+1、寄存器约束
+
+当你当前的输入或输入需要借助一个寄存器时，你需要为其指定一个寄存器约束。你可以直接指定一个寄存器的名字，比如：
+
+__asm__ __volatile__("movl %0, %%cr0"::"eax" (cr0));
+
+也可以指定一个缩写，比如：
+
+__asm__ __volatile__("movl %0, %%cr0"::"a" (cr0));
+
+如果你指定一个缩写，比如字母a，则GCC将会根据当前操作表达式中C/C++表达式的宽度决定使用%eax，还是%ax或%al。比如：
+
+unsigned short __shrt;
+
+__asm__ ("mov %0，%%bx" : : "a"(__shrt));
+
+由于变量__shrt是16-bit short类型，则编译出来的汇编代码中，则会让此变量使用%ex寄存器。编译结果为：
+
+       movw    -2(%ebp), %ax  # %ax = __shrt
+#APP
+        movl    %ax, %bx
+#NO_APP
+
+无论是Input，还是Output操作表达式约束，都可以使用寄存器约束。
+
+下表中列出了常用的寄存器约束的缩写。
+
+
+约束 Input/Output 意义 
+r I,O 表示使用一个通用寄存器，由GCC在%eax/%ax/%al, %ebx/%bx/%bl, %ecx/%cx/%cl, %edx/%dx/%dl中选取一个GCC认为合适的。 
+q I,O 表示使用一个通用寄存器，和r的意义相同。 
+a I,O 表示使用%eax / %ax / %al 
+b I,O 表示使用%ebx / %bx / %bl 
+c I,O 表示使用%ecx / %cx / %cl 
+d I,O 表示使用%edx / %dx / %dl 
+D I,O 表示使用%edi / %di 
+S I,O 表示使用%esi / %si 
+f I,O 表示使用浮点寄存器 
+t I,O 表示使用第一个浮点寄存器 
+u I,O 表示使用第二个浮点寄存器 
+
+
+2、内存约束 
+如果一个Input/Output操作表达式的C/C++表达式表现为一个内存地址，不想借助于任何寄存器，则可以使用内存约束。比如：
+
+__asm__ ("lidt %0" : "=m"(__idt_addr)); 或 __asm__ ("lidt %0" : :"m"(__idt_addr));
+
+我们看一下它们分别被放在一个C源文件中，然后被GCC编译后的结果：
+
+$ cat example5.c
+
+// 本例中，变量sh被作为一个内存输入
+
+int main(int __argc, char* __argv[])               
+{                                                  
+         char* sh = (char*)&__argc;                
+                                                   
+        __asm__ __volatile__("lidt %0" : : "m" (sh)); 
+                                                   
+        return 0;                                  
+} 
+
+$ gcc -S example5.c
+
+$ cat example5.s
+
+main:                         
+        pushl   %ebp          
+        movl    %esp, %ebp    
+        subl    $4, %esp      
+        leal     8(%ebp), %eax 
+        movl   %eax, -4(%ebp)  # sh = (char*) &__argc
+#APP                          
+        lidt      -4(%ebp)         
+#NO_APP                       
+        movl    $0, %eax      
+        leave                 
+        ret                   
+
+
+$ cat example6.c
+
+// 本例中，变量sh被作为一个内存输出
+
+int main(int __argc, char* __argv[])               
+{                                                  
+         char* sh = (char*)&__argc;                
+                                                   
+        __asm__ __volatile__("lidt %0" : "=m" (sh)); 
+                                                   
+        return 0;                                  
+}          
+
+$ gcc -S example6.c
+
+$ cat example6.s
+
+main:
+        pushl   %ebp
+        movl    %esp, %ebp
+        subl    $4, %esp
+        leal     8(%ebp), %eax
+        movl    %eax, -4(%ebp) # sh = (char*) &__argc
+#APP
+        lidt      -4(%ebp)
+#NO_APP
+        movl    $0, %eax
+        leave
+        ret
+首先，你会注意到，在这两个例子中，变量sh没有借助任何寄存器，而是直接参与了指令lidt的操作。
+
+其次，通过仔细观察，你会发现一个惊人的事实，两个例子编译出来的汇编代码是一样的！虽然，一个例子中变量sh作为输入，而另一个例子中变量sh作为输出。这是怎么回事？
+
+原来，使用内存方式进行输入输出时，由于不借助寄存器，所以GCC不会按照你的声明对其作任何的输入输出处理。GCC只会直接拿来用，究竟对这个C/C++表达式而言是输入还是输出，完全依赖与你写在"Instruction List"中的指令对其操作的指令。
+
+由于上例中，对其操作的指令为lidt，lidt指令的操作数是一个输入型的操作数，所以事实上对变量sh的操作是一个输入操作，即使你把它放在Output域也不会改变这一点。所以，对此例而言，完全符合语意的写法应该是将sh放在Input域，尽管放在Output域也会有正确的执行结果。
+
+所以，对于内存约束类型的操作表达式而言，放在Input域还是放在Output域，对编译结果是没有任何影响的，因为本来我们将一个操作表达式放在Input域或放在Output域是希望GCC能为我们自动通过寄存器将表达式的值输入或输出。既然对于内存约束类型的操作表达式来说，GCC不会自动为它做任何事情，那么放在哪儿也就无所谓了。但从程序员的角度而言，为了增强代码的可读性，最好能够把它放在符合实际情况的地方。
+
+
+约束 Input/Output 意义 
+m I,O 表示使用系统所支持的任何一种内存方式，不需要借助寄存器 
+
+
+3、立即数约束
+
+如果一个Input/Output操作表达式的C/C++表达式是一个数字常数，不想借助于任何寄存器，则可以使用立即数约束。
+
+由于立即数在C/C++中只能作为右值，所以对于使用立即数约束的表达式而言，只能放在Input域。
+
+比如：__asm__ __volatile__("movl %0, %%eax" : : "i" (100) ); 
+
+立即数约束很简单，也很容易理解，我们在这里就不再赘述。
+
+
+约束 Input/Output 意义 
+i I 表示输入表达式是一个立即数(整数)，不需要借助任何寄存器 
+F I 表示输入表达式是一个立即数(浮点数)，不需要借助任何寄存器 
+
+
+4、通用约束
+
+
+约束 Input/Output 意义 
+g I,O 表示可以使用通用寄存器，内存，立即数等任何一种处理方式。 
+0,1,2,3,4,5,6,7,8,9 I 表示和第n个操作表达式使用相同的寄存器/内存。 
+
+
+通用约束g是一个非常灵活的约束，当程序员认为一个C/C++表达式在实际的操作中，究竟使用寄存器方式，还是使用内存方式或立即数方式并无所谓时，或者程序员想实现一个灵活的模板，让GCC可以根据不同的C/C++表达式生成不同的访问方式时，就可以使用通用约束g。比如：
+
+#define JUST_MOV(foo)  __asm__ ("movl %0, %%eax" : : "g"(foo))
+
+JUST_MOV(100)和JUST_MOV(var)则会让编译器产生不同的代码。
+
+int main(int __argc, char* __argv[])    
+{                                       
+        JUST_MOV(100);                  
+                                        
+        return 0;                       
+}                                       
+
+编译后生成的代码为： 
+
+main:                       
+        pushl   %ebp        
+        movl    %esp, %ebp  
+#APP                        
+        movl $100, %eax     
+#NO_APP                     
+        movl    $0, %eax    
+        popl    %ebp        
+        ret
+
+很明显这是立即数方式。而下一个例子：
+
+int main(int __argc, char* __argv[])    
+{                                       
+        JUST_MOV(__argc);                  
+                                        
+        return 0;                       
+}                                       
+
+经编译后生成的代码为：
+
+main:                      
+        pushl   %ebp       
+        movl    %esp, %ebp 
+#APP                       
+        movl   8(%ebp), %eax 
+#NO_APP                    
+        movl    $0, %eax   
+        popl     %ebp       
+        ret                
+
+这个例子是使用内存方式。
+
+一个带有C/C++表达式的内联汇编，其操作表达式被按照被列出的顺序编号，第一个是0，第2个是1，依次类推，GCC最多允许有10个操作表达式。比如：
+
+
+ __asm__ ("popl %0 /n/t"
+                         "movl %1, %%esi /n/t"
+                         "movl %2, %%edi /n/t"
+                         : "=a"(__out)
+                         : "r" (__in1), "r" (__in2));
+
+此例中，__out所在的Output操作表达式被编号为0，"r"(__in1)被编号为1，"r"(__in2)被编号为2。
+
+再如：
+
+__asm__ ("movl %%eax, %%ebx" : : "a"(__in1), "b"(__in2));
+
+此例中，"a"(__in1)被编号为0，"b"(__in2)被编号为1。
+
+如果某个Input操作表达式使用数字0到9中的一个数字（假设为1）作为它的操作约束，则等于向GCC声明：“我要使用和编号为1的Output操作表达式相同的寄存器（如果Output操作表达式1使用的是寄存器），或相同的内存地址（如果Output操作表达式1使用的是内存）”。上面的描述包含两个限定：数字0到数字9作为操作约束只能用在Input操作表达式中，被指定的操作表达式（比如某个Input操作表达式使用数字1作为约束，那么被指定的就是编号为1的操作表达式）只能是Output操作表达式。
+
+由于GCC规定最多只能有10个Input/Output操作表达式，所以事实上数字9作为操作约束永远也用不到，因为Output操作表达式排在Input操作表达式的前面，那么如果有一个Input操作表达式指定了数字9作为操作约束的话，那么说明Output操作表达式的数量已经至少为10个了，那么再加上这个Input操作表达式，则至少为11个了，以及超出GCC的限制。
+
+5、Modifier Characters（修饰符）
+
+等号(=)和加号(+)用于对Output操作表达式的修饰，一个Output操作表达式要么被等号(=)修饰，要么被加号(+)修饰，二者必居其一。使用等号(=)说明此Output操作表达式是Write-Only的，使用加号(+)说明此Output操作表达式是Read-Write的。它们必须被放在约束字符串的第一个字母。比如"a="(foo)是非法的，而"+g"(foo)则是合法的。
+
+当使用加号(+)的时候，此Output表达式等价于使用等号(=)约束加上一个Input表达式。比如
+
+__asm__ ("movl %0, %%eax; addl %%eax, %0" : "+b"(foo)) 等价于
+
+__asm__ ("movl %1, %%eax; addl %%eax, %0" : "=b"(foo) : "b"(foo))
+
+但如果使用后一种写法，"Instruction List"中的别名也要相应的改动。关于别名，我们后面会讨论。
+
+像等号(=)和加号(+)修饰符一样，符号(&)也只能用于对Output操作表达式的修饰。当使用它进行修饰时，等于向GCC声明："GCC不得为任何Input操作表达式分配与此Output操作表达式相同的寄存器"。其原因是&修饰符意味着被其修饰的Output操作表达式要在所有的Input操作表达式被输入前输出。我们看下面这个例子：
+
+int main(int __argc, char* __argv[])       
+{                                          
+        int __in1 = 8, __in2 = 4, __out = 3;     
+                                           
+        __asm__ ("popl %0 /n/t"
+                         "movl %1, %%esi /n/t"
+                         "movl %2, %%edi /n/t"
+                         : "=a"(__out)
+                         : "r" (__in1), "r" (__in2));
+                                           
+        return 0;                          
+}                                          
+此例中，%0对应的就是Output操作表达式，它被指定的寄存器是%eax，整个Instruction List的第一条指令popl %0，编译后就成为popl %eax，这时%eax的内容已经被修改，随后在Instruction List后，GCC会通过movl %eax, address_of_out这条指令将%eax的内容放置到Output变量__out中。对于本例中的两个Input操作表达式而言，它们的寄存器约束为"r"，即要求GCC为其指定合适的寄存器，然后在Instruction List之前将__in1和__in2的内容放入被选出的寄存器中，如果它们中的一个选择了已经被__out指定的寄存器%eax，假如是__in1，那么GCC在Instruction List之前会插入指令movl address_of_in1, %eax，那么随后popl %eax指令就修改了%eax的值，此时%eax中存放的已经不是Input变量__in1的值了，那么随后的movl %1, %%esi指令，将不会按照我们的本意——即将__in1的值放入%esi中——而是将__out的值放入%esi中了。 
+下面就是本例的编译结果，很明显，GCC为__in2选择了和__out相同的寄存器%eax，这与我们的初衷不符。
+
+main:                               
+        pushl   %ebp                
+        movl    %esp, %ebp          
+        subl    $12, %esp           
+        movl    $8, -4(%ebp)        
+        movl    $4, -8(%ebp)        
+        movl    $3, -12(%ebp)       
+        movl    -4(%ebp), %edx      # __in1使用寄存器%edx
+        movl    -8(%ebp), %eax      # __in2使用寄存器%eax
+#APP                                
+        popl %eax                   
+        movl %edx, %esi             
+        movl %eax, %edi             
+                                    
+#NO_APP                             
+        movl    %eax, %eax          
+        movl    %eax, -12(%ebp)     # __out使用寄存器%eax
+        movl    $0, %eax            
+        leave                       
+        ret                         
+
+为了避免这种情况，我们必须向GCC声明这一点，要求GCC为所有的Input操作表达式指定别的寄存器，方法就是在Output操作表达式"=a"(__out)的操作约束中加入&约束，由于GCC规定等号(=)约束必须放在第一个，所以我们写作"=&a"(__out)。 
+下面是我们将&约束加入之后编译的结果：
+main:                          
+        pushl   %ebp           
+        movl    %esp, %ebp     
+        subl    $12, %esp      
+        movl    $8, -4(%ebp)   
+        movl    $4, -8(%ebp)   
+        movl    $3, -12(%ebp)  
+        movl    -4(%ebp), %edx    #__in1使用寄存器%edx
+        movl    -8(%ebp), %eax 
+        movl    %eax, %ecx         # __in2使用寄存器%ecx
+#APP                           
+        popl     %eax              
+        movl    %edx, %esi        
+        movl    %ecx, %edi        
+                               
+#NO_APP                        
+        movl    %eax, %eax     
+        movl    %eax, -12(%ebp)   #__out使用寄存器%eax
+        movl    $0, %eax       
+        leave                  
+        ret                    
+
+OK！这下好了，完全与我们的意图吻合。 
+如果一个Output操作表达式的寄存器约束被指定为某个寄存器，只有当至少存在一个Input操作表达式的寄存器约束为可选约束时，（可选约束的意思是可以从多个寄存器中选取一个，或使用非寄存器方式），比如"r"或"g"时，此Output操作表达式使用&修饰才有意义。如果你为所有的Input操作表达式指定了固定的寄存器，或使用内存/立即数约束，则此Output操作表达式使用&修饰没有任何意义。比如：
+
+__asm__ ("popl %0 /n/t"           
+                 "movl %1, %%esi /n/t"    
+                 "movl %2, %%edi /n/t"    
+                 : "=&a"(__out)             
+                 : "m" (__in1), "c" (__in2)); 
+
+此例中的Output操作表达式完全没有必要使用&来修饰，因为__in1和__in2都被指定了固定的寄存器，或使用了内存方式，GCC无从选择。
+
+但如果你已经为某个Output操作表达式指定了&修饰，并指定了某个固定的寄存器，你就不能再为任何Input操作表达式指定这个寄存器，否则会出现编译错误。比如：
+
+__asm__ ("popl %0 /n/t"           
+                 "movl %1, %%esi /n/t"    
+                 "movl %2, %%edi /n/t"    
+                 : "=&a"(__out)             
+                 : "a" (__in1), "c" (__in2)); 
+
+本例中，由于__out已经指定了寄存器%eax，同时使用了符号&修饰，则再为__in1指定寄存器%eax就是非法的。
+
+
+反过来，你也可以为Output指定可选约束，比如"r","g"等，让GCC为其选择到底使用哪个寄存器，还是使用内存方式，GCC在选择的时候，会首先排除掉已经被Input操作表达式使用的所有寄存器，然后在剩下的寄存器中选择，或干脆使用内存方式。比如：
+
+__asm__ ("popl %0 /n/t"           
+                 "movl %1, %%esi /n/t"    
+                 "movl %2, %%edi /n/t"    
+                 : "=&r"(__out)             
+                 : "a" (__in1), "c" (__in2)); 
+
+本例中，由于__out指定了约束"r"，即让GCC为其决定使用哪一格寄存器，而寄存器%eax和%ecx已经被__in1和__in2使用，那么GCC在为__out选择的时候，只会在%ebx和%edx中选择。 
+
+前3个修饰符只能用在Output操作表达式中，而百分号[%]修饰符恰恰相反，只能用在Input操作表达式中，用于向GCC声明：“当前Input操作表达式中的C/C++表达式可以和下一个Input操作表达式中的C/C++表达式互换”。这个修饰符号一般用于符合交换律运算，比如加(+)，乘(*)，与(&)，或(|)等等。我们看一个例子：
+
+int main(int __argc, char* __argv[])           
+{                                              
+        int __in1 = 8, __in2 = 4, __out = 3;         
+                                               
+        __asm__ ("addl %1, %0/n/t"             
+                         : "=r"(__out)                   
+                         : "%r" (__in1), "0" (__in2));     
+                                               
+        return 0;                              
+}
+在此例中，由于指令是一个加法运算，相当于等式__out = __in1 + __in2，而它与等式__out = __in2 + __in1没有什么不同。所以使用百分号修饰，让GCC知道__in1和__in2可以互换，也就是说GCC可以自动将本例的内联汇编改变为：
+
+
+__asm__ ("addl %1, %0/n/t"
+                  : "=r"(__out)
+                  : "%r" (__in2), "0" (__in1));     
+
+
+修饰符 Input/Output 意义 
+= O 表示此Output操作表达式是Write-Only的 
++ O 表示此Output操作表达式是Read-Write的 
+& O 表示此Output操作表达式独占为其指定的寄存器 
+% I 表示此Input操作表达式中的C/C++表达式可以和下一个Input操作表达式中的C/C++表达式互换 
+
+4. 占位符
+
+什么叫占位符？我们看一看下面这个例子：
+
+__asm__ ("addl %1, %0/n/t"
+                  : "=a"(__out)
+                  : "m" (__in1), "a" (__in2));
+
+这个例子中的%0和%1就是占位符。每一个占位符对应一个Input/Output操作表达式。我们在之前已经提到，GCC规定一个内联汇编语句最多可以有10个Input/Output操作表达式，然后按照它们被列出的顺序依次赋予编号0到9。对于占位符中的数字而言，和这些编号是对应的。
+
+
+由于占位符前面使用一个百分号(%)，为了区别占位符和寄存器，GCC规定在带有C/C++表达式的内联汇编中，"Instruction List"中直接写出的寄存器前必须使用两个百分号(%%)。
+
+GCC对其进行编译的时候，会将每一个占位符替换为对应的Input/Output操作表达式所指定的寄存器/内存地址/立即数。比如在上例中，占位符%0对应Output操作表达式"=a"(__out)，而"=a"(__out)指定的寄存器为%eax，所以把占位符%0替换为%eax，占位符%1对应Input操作表达式"m"(__in1)，而"m"(__in1)被指定为内存操作，所以把占位符%1替换为变量__in1的内存地址。
+
+也许有人认为，在上面这个例子中，完全可以不使用%0，而是直接写%%eax，就像这样：
+
+__asm__ ("addl %1, %%eax/n/t"
+                  : "=a"(__out)
+                  : "m" (__in1), "a" (__in2));
+
+和上面使用占位符%0没有什么不同，那么使用占位符%0就没有什么意义。确实，两者生成的代码完全相同，但这并不意味着这种情况下占位符没有意义。因为如果不使用占位符，那么当有一天你想把变量__out的寄存器约束由a改为b时，那么你也必须将addl指令中的%%eax改为%%ebx，也就是说你需要同时修改两个地方，而如果你使用占位符，你只需要修改一次就够了。另外，如果你不使用占位符，将不利于代码的清晰性。在上例中，如果你使用占位符，那么你一眼就可以得知，addl指令的第二个操作数内容最终会输出到变量__out中；否则，如果你不用占位符，而是直接将addl指令的第2个操作数写为%%eax，那么你需要考虑一下才知道它最终需要输出到变量__out中。这是占位符最粗浅的意义。毕竟在这种情况下，你完全可以不用。
+
+但对于这些情况来说，不用占位符就完全不行了：
+
+首先，我们看一看上例中的第1个Input操作表达式"m"(__in1)，它被GCC替换之后，表现为addl address_of_in1, %%eax，__in1的地址是什么？编译时才知道。所以我们完全无法直接在指令中去写出__in1的地址，这时使用占位符，交给GCC在编译时进行替代，就可以解决这个问题。所以这种情况下，我们必须使用占位符。
+
+其次，如果上例中的Output操作表达式"=a"(__out)改为"=r"(__out)，那么__out在究竟使用那么寄存器只有到编译时才能通过GCC来决定，既然在我们写代码的时候，我们不知道究竟哪个寄存器被选择，我们也就不能直接在指令中写出寄存器的名称，而只能通过占位符替代来解决。
+
+5. Clobber/Modify
+
+有时候，你想通知GCC当前内联汇编语句可能会对某些寄存器或内存进行修改，希望GCC在编译时能够将这一点考虑进去。那么你就可以在Clobber/Modify域声明这些寄存器或内存。
+
+这种情况一般发生在一个寄存器出现在"Instruction List"，但却不是由Input/Output操作表达式所指定的，也不是在一些Input/Output操作表达式使用"r","g"约束时由GCC为其选择的，同时此寄存器被"Instruction List"中的指令修改，而这个寄存器只是供当前内联汇编临时使用的情况。比如：
+
+__asm__ ("movl %0, %%ebx" : : "a"(__foo) : "bx");
+
+寄存器%ebx出现在"Instruction List中"，并且被movl指令修改，但却未被任何Input/Output操作表达式指定，所以你需要在Clobber/Modify域指定"bx"，以让GCC知道这一点。
+
+因为你在Input/Output操作表达式所指定的寄存器，或当你为一些Input/Output操作表达式使用"r","g"约束，让GCC为你选择一个寄存器时，GCC对这些寄存器是非常清楚的——它知道这些寄存器是被修改的，你根本不需要在Clobber/Modify域再声明它们。但除此之外，GCC对剩下的寄存器中哪些会被当前的内联汇编修改一无所知。所以如果你真的在当前内联汇编指令中修改了它们，那么就最好在Clobber/Modify中声明它们，让GCC针对这些寄存器做相应的处理。否则有可能会造成寄存器的不一致，从而造成程序执行错误。
+
+在Clobber/Modify域中指定这些寄存器的方法很简单，你只需要将寄存器的名字使用双引号(" ")引起来。如果有多个寄存器需要声明，你需要在任意两个声明之间用逗号隔开。比如：
+
+__asm__ ("movl %0, %%ebx; popl %%ecx" : : "a"(__foo) : "bx", "cx" );
+
+这些串包括：
+
+
+声明的串 代表的寄存器 
+"al","ax","eax" %eax 
+"bl","bx","ebx" %ebx 
+"cl","cx","ecx" %ecx 
+"dl","dx","edx" %edx 
+"si","esi" %esi 
+"di", "edi" %edi 
+
+
+由上表可以看出，你只需要使用"ax","bx","cx","dx","si","di"就可以了，因为其它的都和它们中的一个是等价的。
+
+如果你在一个内联汇编语句的Clobber/Modify域向GCC声明某个寄存器内容发生了改变，GCC在编译时，如果发现这个被声明的寄存器的内容在此内联汇编语句之后还要继续使用，那么GCC会首先将此寄存器的内容保存起来，然后在此内联汇编语句的相关生成代码之后，再将其内容恢复。我们来看两个例子，然后对比一下它们之间的区别。
+
+这个例子中声明了寄存器%ebx内容发生了改变：
+
+$ cat example7.c
+
+int main(int __argc, char* __argv[]) 
+{                                    
+        int in = 8;                  
+                                     
+        __asm__ ("addl %0, %%ebx"    
+                 : /* no output */   
+                 : "a" (in) : "bx"); 
+                                     
+        return 0;                    
+}
+
+$ gcc -O -S example7.c
+
+$ cat example7.s
+
+main:
+        pushl   %ebp
+        movl    %esp, %ebp
+        pushl   %ebx                       # %ebx内容被保存           
+        movl    $8, %eax
+#APP
+        addl     %eax, %ebx
+#NO_APP
+        movl    $0, %eax
+        movl    (%esp), %ebx          # %ebx内容被恢复
+        leave
+        ret
+
+下面这个例子的C源码与上一个例子除了没有声明%ebx寄存器发生了改变之外，其它都相同。
+
+$ cat example8.c
+
+int main(int __argc, char* __argv[]) 
+{                                    
+        int in = 8;                  
+                                     
+        __asm__ ("addl %0, %%ebx"    
+                 : /* no output */   
+                 : "a" (in) ); 
+                                     
+        return 0;                    
+}
+
+$ gcc -O -S example8.c
+
+$ cat example8.s
+
+main:                      
+        pushl   %ebp       
+        movl    %esp, %ebp 
+        movl    $8, %eax   
+#APP                       
+        addl %eax, %ebx    
+#NO_APP                    
+        movl    $0, %eax   
+        popl    %ebp       
+        ret
+
+仔细对比一下example7.s和example8.s，你就会明白在Clobber/Modify域声明一个寄存器的意义。
+
+另外需要注意的是，如果你在Clobber/Modify域声明了一个寄存器，那么这个寄存器将不能再被用做当前内联汇编语句的Input/Output操作表达式的寄存器约束，如果Input/Output操作表达式的寄存器约束被指定为"r"或"g"，GCC也不会选择已经被声明在Clobber/Modify中的寄存器。比如：
+
+__asm__ ("movl %0, %%ebx" : : "a"(__foo) : "ax", "bx");
+
+此例中，由于Output操作表达式"a"(__foo)的寄存器约束已经指定了%eax寄存器，那么再在Clobber/Modify域中指定"ax"就是非法的。编译时，GCC会给出编译错误。 
+
+除了寄存器的内容会被改变，内存的内容也可以被修改。如果一个内联汇编语句"Instruction List"中的指令对内存进行了修改，或者在此内联汇编出现的地方内存内容可能发生改变，而被改变的内存地址你没有在其Output操作表达式使用"m"约束，这种情况下你需要使用在Clobber/Modify域使用字符串"memory"向GCC声明：“在这里，内存发生了，或可能发生了改变”。例如：
+
+void * memset(void * s, char c, size_t count)
+{
+     __asm__("cld/n/t"
+                     "rep/n/t"
+                     "stosb"
+                     : /* no output */
+                     : "a" (c),"D" (s),"c" (count)
+                     : "cx","di","memory");
+       return s;
+}
+
+此例实现了标准函数库memset，其内联汇编中的stosb对内存进行了改动，而其被修改的内存地址s被指定装入%edi，没有任何Output操作表达式使用了"m"约束，以指定内存地址s处的内容发生了改变。所以在其Clobber/Modify域使用"memory"向GCC声明：内存内容发生了变动。
+
+如果一个内联汇编语句的Clobber/Modify域存在"memory"，那么GCC会保证在此内联汇编之前，如果某个内存的内容被装入了寄存器，那么在这个内联汇编之后，如果需要使用这个内存处的内容，就会直接到这个内存处重新读取，而不是使用被存放在寄存器中的拷贝。因为这个时候寄存器中的拷贝已经很可能和内存处的内容不一致了。
+
+这只是使用"memory"时，GCC会保证做到的一点，但这并不是全部。因为使用"memory"是向GCC声明内存发生了变化，而内存发生变化带来的影响并不止这一点。比如我们在前面讲到的例子：
+
+int main(int __argc, char* __argv[])  
+{                                     
+        int* __p = (int*)__argc;      
+                                      
+        (*__p) = 9999;                
+                                      
+        __asm__("":::"memory");       
+                                      
+        if((*__p) == 9999)            
+                return 5;             
+                                      
+        return (*__p);                
+}
+
+本例中，如果没有那条内联汇编语句，那个if语句的判断条件就完全是一句废话。GCC在优化时会意识到这一点，而直接只生成return 5的汇编代码，而不会再生成if语句的相关代码，而不会生成return (*__p)的相关代码。但你加上了这条内联汇编语句，它除了声明内存变化之外，什么都没有做。但GCC此时就不能简单的认为它不需要判断都知道(*__p)一定与9999相等，它只有老老实实生成这条if语句的汇编代码，一起相关的两个return语句相关代码。
+
+当一个内联汇编指令中包含影响eflags寄存器中的条件标志（也就是那些Jxx等跳转指令要参考的标志位，比如，进位标志，0标志等），那么需要在Clobber/Modify域中使用"cc"来声明这一点。这些指令包括adc, div，popfl，btr，bts等等，另外，当包含call指令时，由于你不知道你所call的函数是否会修改条件标志，为了稳妥起见，最好也使用"cc"。
+
+我很少在相关资料中看到有关"cc"的确切用法，只有一份文档提到了它，但还不是i386平台的，只是说"cc"是处理器平台相关的，并非所有的平台都支持它，但即使在不支持它的平台上，使用它也不会造成编译错误。我做了一些实验，但发现使用"cc"和不使用"cc"所生成的代码没有任何不同。但Linux 2.4的相关代码中用到了它。如果谁知道在i386平台上"cc"的细节，请和我联系。
+
+另外，还可以在Clobber/Modify域指定数字0到9，以声明第n个Input/Output操作表达式所使用的寄存器发生了变化，但正如我们在前面所提到的，如果你为某个Input/Output操作表达式指定了寄存器，或使用"g","r"等约束让GCC为其选择寄存器，GCC已经知道哪个寄存器内容发生了变化，所以这么做没有什么意义；我也作了相关的试验，没有发现使用它会对GCC生成的汇编代码有任何影响，至少在i386平台上是这样。Linux 2.4的所有i386平台相关内联汇编代码中都没有使用这一点，但S390平台相关代码中有用到，但由于我对S390汇编没有任何概念，所以，也不知道这么做的意义何在
+
+
+
+
+
+
